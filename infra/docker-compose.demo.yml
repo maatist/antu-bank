@@ -1,0 +1,203 @@
+# =============================================================================
+# Stack REDUCIDO del perfil "demo" (tarea 12a.2, Requisito 12, criterios 2 y 7).
+# =============================================================================
+# Topología consolidada pensada para un PaaS pequeño (Render/Fly.io) o para reproducir localmente
+# el despliegue público. Frente al stack local (infra/docker-compose.yml) se reduce a:
+#
+#   - UN solo PostgreSQL para todos los servicios (aislamiento por SCHEMA por servicio; ver
+#     infra/postgres/demo-init.sql y los application-demo.yml). NO hay una base por servicio.
+#   - SIN contenedor de Kafka: se usa un Kafka GESTIONADO GRATUITO (Upstash/Redpanda) referenciado
+#     por variables de entorno (KAFKA_BOOTSTRAP_SERVERS + credenciales SASL). NUNCA se hardcodean.
+#   - SIN observabilidad (Prometheus/Grafana/Loki/Jaeger): fuera del alcance de la demo reducida.
+#   - Keycloak como IdP (importa el realm versionado antu-bank) y los 6 microservicios.
+#
+# Local y AWS mantienen database-per-service estricto y stack fiel (Requisito 12, criterio 7);
+# este archivo aplica SOLO al despliegue público reducido.
+#
+# Uso (ver infra/README-demo.md para el detalle de variables):
+#   1) Crear infra/.env.demo a partir de infra/.env.demo.example con las credenciales del
+#      PostgreSQL, Keycloak y el Kafka gestionado.
+#   2) docker compose --env-file infra/.env.demo -f infra/docker-compose.demo.yml up -d --build
+#
+# Los Dockerfile por servicio requieren el contexto de build en la RAÍZ del monorepo (..).
+
+name: antu-bank-demo
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL consolidado: una sola instancia y base (neobank) con un schema por servicio.
+  # El script demo-init.sql crea los schemas account/ledger/transfer al inicializar el volumen.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: antu-demo-postgres
+    environment:
+      POSTGRES_DB: ${DEMO_DB_NAME:-neobank}
+      POSTGRES_USER: ${DEMO_DB_USER:-neobank}
+      POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:?define DEMO_DB_PASSWORD en infra/.env.demo}
+    volumes:
+      - pg-demo:/var/lib/postgresql/data
+      # Init de schemas por servicio (solo se ejecuta con el volumen vacío).
+      - ./postgres/demo-init.sql:/docker-entrypoint-initdb.d/demo-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DEMO_DB_USER:-neobank} -d ${DEMO_DB_NAME:-neobank}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Keycloak (OIDC): importa el realm versionado antu-bank. En demo se sirve por HTTP dentro de la
+  # red interna; el PaaS termina TLS en el borde. La URL pública del issuer se inyecta por entorno.
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: antu-demo-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?define KEYCLOAK_ADMIN_PASSWORD en infra/.env.demo}
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /realms/antu-bank HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | head -1 | grep -q 200"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Microservicios. Variables comunes del perfil demo:
+  #   - SPRING_PROFILES_ACTIVE=demo activa los application-demo.yml.
+  #   - DEMO_DB_* apuntan al PostgreSQL consolidado; cada servicio fija su schema en su propio yml.
+  #   - KEYCLOAK_ISSUER_URI: URL pública del realm (validación de JWT).
+  #   - KAFKA_*: broker gestionado gratuito + credenciales SASL (desde infra/.env.demo).
+  # ---------------------------------------------------------------------------
+  account-service:
+    build:
+      context: ..
+      dockerfile: services/account-service/Dockerfile
+    container_name: antu-demo-account
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      DEMO_DB_URL: jdbc:postgresql://postgres:5432/${DEMO_DB_NAME:-neobank}
+      DEMO_DB_USER: ${DEMO_DB_USER:-neobank}
+      DEMO_DB_PASSWORD: ${DEMO_DB_PASSWORD}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/antu-bank}
+    expose:
+      - "8082"
+
+  ledger-service:
+    build:
+      context: ..
+      dockerfile: services/ledger-service/Dockerfile
+    container_name: antu-demo-ledger
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      DEMO_DB_URL: jdbc:postgresql://postgres:5432/${DEMO_DB_NAME:-neobank}
+      DEMO_DB_USER: ${DEMO_DB_USER:-neobank}
+      DEMO_DB_PASSWORD: ${DEMO_DB_PASSWORD}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/antu-bank}
+      # Kafka gestionado gratuito (Upstash/Redpanda) — sin credenciales en el repo.
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?define KAFKA_BOOTSTRAP_SERVERS en infra/.env.demo}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-SASL_SSL}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
+      KAFKA_SASL_JAAS_CONFIG: ${KAFKA_SASL_JAAS_CONFIG:?define KAFKA_SASL_JAAS_CONFIG en infra/.env.demo}
+    expose:
+      - "8083"
+
+  transfer-service:
+    build:
+      context: ..
+      dockerfile: services/transfer-service/Dockerfile
+    container_name: antu-demo-transfer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ledger-service:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      DEMO_DB_URL: jdbc:postgresql://postgres:5432/${DEMO_DB_NAME:-neobank}
+      DEMO_DB_USER: ${DEMO_DB_USER:-neobank}
+      DEMO_DB_PASSWORD: ${DEMO_DB_PASSWORD}
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/antu-bank}
+      LEDGER_BASE_URL: http://ledger-service:8083
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?define KAFKA_BOOTSTRAP_SERVERS en infra/.env.demo}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-SASL_SSL}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
+      KAFKA_SASL_JAAS_CONFIG: ${KAFKA_SASL_JAAS_CONFIG:?define KAFKA_SASL_JAAS_CONFIG en infra/.env.demo}
+    expose:
+      - "8084"
+
+  fraud-service:
+    build:
+      context: ..
+      dockerfile: services/fraud-service/Dockerfile
+    container_name: antu-demo-fraud
+    depends_on:
+      keycloak:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?define KAFKA_BOOTSTRAP_SERVERS en infra/.env.demo}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-SASL_SSL}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
+      KAFKA_SASL_JAAS_CONFIG: ${KAFKA_SASL_JAAS_CONFIG:?define KAFKA_SASL_JAAS_CONFIG en infra/.env.demo}
+    expose:
+      - "8085"
+
+  notification-service:
+    build:
+      context: ..
+      dockerfile: services/notification-service/Dockerfile
+    container_name: antu-demo-notification
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:?define KAFKA_BOOTSTRAP_SERVERS en infra/.env.demo}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-SASL_SSL}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
+      KAFKA_SASL_JAAS_CONFIG: ${KAFKA_SASL_JAAS_CONFIG:?define KAFKA_SASL_JAAS_CONFIG en infra/.env.demo}
+    expose:
+      - "8086"
+
+  # api-gateway: único servicio con puerto publicado (borde HTTP de la demo). Enruta a los
+  # servicios internos por nombre de contenedor y agrega el BFF GraphQL.
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: antu-demo-gateway
+    depends_on:
+      account-service:
+        condition: service_started
+      ledger-service:
+        condition: service_started
+      transfer-service:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      KEYCLOAK_ISSUER_URI: ${KEYCLOAK_ISSUER_URI:-http://keycloak:8080/realms/antu-bank}
+      ACCOUNT_SERVICE_URI: http://account-service:8082
+      LEDGER_SERVICE_URI: http://ledger-service:8083
+      TRANSFER_SERVICE_URI: http://transfer-service:8084
+    ports:
+      - "8080:8080"
+
+volumes:
+  pg-demo:

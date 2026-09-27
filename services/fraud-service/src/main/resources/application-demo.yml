@@ -1,0 +1,18 @@
+# =============================================================================
+# Perfil "demo" — fraud-service (tarea 12a.2, Requisito 12, criterios 2 y 7).
+# =============================================================================
+# Se activa SOLO en el despliegue público reducido (SPRING_PROFILES_ACTIVE=demo). NO altera el
+# perfil por defecto (local). fraud-service es sin estado (no tiene base de datos): solo consume
+# TransferConfirmed y produce TransferFlagged sobre Kafka.
+#
+# Configuración reducida (Requisito 12, criterio 2): Kafka gestionado gratuito (Upstash/Redpanda)
+# vía SASL_SSL. Todos los secretos se parametrizan por entorno (sin credenciales hardcodeadas).
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    properties:
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-256}
+      # Usuario/clave del proveedor gestionado, inyectados por entorno (nunca en el repo).
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG}

@@ -1,0 +1,63 @@
+meta {
+  name: Registrar transacción balanceada
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{ledgerUrl}}/transactions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept-Language: es
+}
+
+body:json {
+  {
+    "reference": "seed-fondeo-demo",
+    "currency": "CLP",
+    "entries": [
+      {
+        "accountId": "{{accountId}}",
+        "type": "DEBIT",
+        "amountMinor": 100000
+      },
+      {
+        "accountId": "{{destinationAccountId}}",
+        "type": "CREDIT",
+        "amountMinor": 100000
+      }
+    ]
+  }
+}
+
+script:post-response {
+  if (res.getBody() && res.getBody().id) {
+    bru.setEnvVar("transactionId", res.getBody().id);
+  }
+}
+
+tests {
+  test("responde 201 con id de transacción", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody()).to.have.property("id");
+  });
+}
+
+docs {
+  Registra una transacción de doble entrada BALANCEADA (Σ = 0). El invariante exige que la suma
+  con signo de los asientos sea cero: DEBIT suma (+) y CREDIT resta (−). Aquí se DEBITA
+  +$100.000 a la cuenta origen ({{accountId}}) y se ACREDITA −$100.000 a la cuenta destino
+  ({{destinationAccountId}}), dejando fondos en la cuenta origen para la transferencia posterior.
+
+  `POST /transactions` es una operación de back-office: exige el rol ADMIN, por eso usa
+  {{adminToken}}. Los montos van en minor units (CLP: pesos enteros). Una transacción
+  desbalanceada (Σ ≠ 0) se rechaza con 400 (ProblemDetail).
+}

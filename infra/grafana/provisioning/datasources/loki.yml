@@ -1,0 +1,53 @@
+# Datasources de logs y trazas aprovisionados (tarea 11.3, Requisito 11, criterios 3 y 4).
+#
+# - Loki: agrega los logs estructurados (JSON) que los servicios envían vía el appender loki4j.
+# - Jaeger: trazas distribuidas (ya usado en la tarea 11.2); aquí se aprovisiona como datasource de
+#   Grafana para que los enlaces "trace-id → traza" desde los logs de Loki resuelvan.
+#
+# Correlación logs ↔ trazas por trace-id: el datasource de Loki define un derivedField que detecta
+# el campo `traceId` en cada log JSON y genera un enlace directo a la traza correspondiente en el
+# datasource de Jaeger. Así, desde un log en Grafana Explore se salta a su traza distribuida.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    # Loki corre en la red de Compose; se le alcanza por su nombre de servicio.
+    url: http://loki:3100
+    isDefault: false
+    editable: true
+    jsonData:
+      # Detecta el trace-id en los logs y lo enlaza al datasource de Jaeger (uid: jaeger).
+      # `matcherType: label` busca el campo traceId (structured metadata que envía loki4j) y usa su
+      # valor para abrir la traza. Se mantiene además un matcher por regex como respaldo por si el
+      # trace-id aparece embebido en el texto del log.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: "traceId"
+          datasourceUid: jaeger
+          url: "$${__value.raw}"
+          urlDisplayLabel: "Ver traza en Jaeger"
+        - name: TraceID (regex)
+          matcherRegex: "\"traceId\"\\s*:\\s*\"(\\w+)\""
+          datasourceUid: jaeger
+          url: "$${__value.raw}"
+          urlDisplayLabel: "Ver traza en Jaeger"
+
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    # Jaeger all-in-one expone su API de query (y UI) en el puerto 16686 dentro de la red de Compose.
+    url: http://jaeger:16686
+    isDefault: false
+    editable: true
+    jsonData:
+      # Correlación inversa traza → logs: desde un span en Jaeger, Grafana ofrece saltar a los logs
+      # de Loki filtrando por el mismo trace-id.
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+        filterBySpanID: false

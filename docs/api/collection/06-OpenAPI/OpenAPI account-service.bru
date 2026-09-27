@@ -1,0 +1,23 @@
+meta {
+  name: OpenAPI account-service
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{accountUrl}}/v3/api-docs
+  body: none
+  auth: none
+}
+
+tests {
+  test("responde 200 con el documento OpenAPI", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("openapi");
+  });
+}
+
+docs {
+  Descarga el documento OpenAPI (JSON) del account-service. Es público (sin token). La Swagger
+  UI navegable está en la raíz del servicio: http://localhost:8082/swagger-ui.html (local).
+}

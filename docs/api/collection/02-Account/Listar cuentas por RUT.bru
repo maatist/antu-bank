@@ -1,0 +1,35 @@
+meta {
+  name: Listar cuentas por RUT
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{accountUrl}}/accounts?rut={{customerRut}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  rut: {{customerRut}}
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept-Language: es
+}
+
+tests {
+  test("responde 200 con una lista", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.be.an("array");
+  });
+}
+
+docs {
+  Lista todas las cuentas del titular por su RUT (formato chileno con puntos y guión). El RUT
+  se valida con dígito verificador módulo 11; un RUT inválido responde 400 (ProblemDetail).
+}

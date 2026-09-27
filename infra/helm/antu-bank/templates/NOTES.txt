@@ -1,0 +1,30 @@
+========================================================================
+ Antu Bank (NeoBank) — chart instalado: {{ .Release.Name }} (ns: {{ .Release.Namespace }})
+========================================================================
+
+Servicios habilitados:
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+  - {{ $name }}  ->  Service {{ include "antu-bank.service.fullname" (dict "root" $ "name" $name) }}:{{ $svc.port }}
+{{- end }}
+{{- end }}
+{{- if .Values.keycloak.enabled }}
+  - keycloak    ->  Service {{ include "antu-bank.service.fullname" (dict "root" $ "name" "keycloak") }}:{{ .Values.keycloak.port }}
+{{- end }}
+
+{{ if .Values.ingress.enabled -}}
+Entrada pública (api-gateway) vía Ingress:
+{{- range .Values.ingress.hosts }}
+  http(s)://{{ .host }}
+{{- end }}
+{{- else -}}
+Ingress deshabilitado. Para probar el gateway localmente:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "antu-bank.service.fullname" (dict "root" $ "name" "api-gateway") }} 8080:{{ (get .Values.services "api-gateway").port }}
+{{- end }}
+
+Verificar estado:
+  kubectl -n {{ .Release.Namespace }} get pods,svc
+
+Recordatorio: los secretos (passwords de RDS, JAAS de MSK, admin de Keycloak) deben
+provenir de Secrets EXISTENTES en el clúster. Nunca se versionan credenciales reales.
+Consulta infra/helm/README.md para el detalle de instalación y teardown en EKS.

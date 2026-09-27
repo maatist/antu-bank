@@ -1,0 +1,103 @@
+{
+  "Comun": {
+    "marca": "Antu Bank",
+    "cerrarSesion": "Cerrar sesión"
+  },
+  "SelectorIdioma": {
+    "etiqueta": "Idioma",
+    "es": "Español",
+    "en": "English"
+  },
+  "Portada": {
+    "subtitulo": "Banca digital chilena",
+    "saludo": "Hola, {nombre}. Ya iniciaste sesión.",
+    "clientePorDefecto": "cliente",
+    "irAlPanel": "Ir al panel",
+    "invitacion": "Ingresa con tu cuenta para ver tus productos y transferir.",
+    "iniciarSesion": "Iniciar sesión",
+    "entrarComoInvitado": "Entrar como invitado (demo)",
+    "heroDescripcion": "Core bancario chileno de referencia: microservicios orientados a eventos, ledger de doble entrada y BFF GraphQL. Un proyecto de portafolio pensado para explorarse en minutos.",
+    "highlightsTitulo": "Qué demuestra el proyecto",
+    "highlightLedger": "Ledger de doble entrada inmutable (saldos siempre cuadrados).",
+    "highlightIdempotencia": "Transferencias idempotentes (un reintento nunca duplica el movimiento).",
+    "highlightEventos": "Arquitectura orientada a eventos: Kafka + patrón Outbox + Saga con compensación.",
+    "highlightSeguridad": "Autenticación OIDC con Keycloak (Authorization Code + PKCE) y roles.",
+    "highlightGraphql": "API Gateway con BFF GraphQL que agrega cuentas, saldos e historial.",
+    "highlightObservabilidad": "Observabilidad (métricas, trazas, logs) e infraestructura como código.",
+    "tourNota": "Al ingresar, un tour guiado te acompaña por el panel (cuentas, transferir e historial).",
+    "demoTitulo": "¿Eres reclutador? Ingresa sin registrarte",
+    "demoDescripcion": "El botón «Entrar como invitado» abre Keycloak con el usuario ya escrito; solo confirma con la contraseña demo. Al ingresar verás un tour guiado del panel.",
+    "demoUsuario": "Usuario",
+    "demoClave": "Contraseña",
+    "demoRolCliente": "Cliente (CUSTOMER)",
+    "demoRolAdmin": "Administrador (ADMIN)",
+    "demoSoloDemo": "Credenciales solo para la demo pública.",
+    "enlacesTitulo": "Explora la API y el código",
+    "enlaceRepositorio": "Código en GitHub",
+    "enlaceSwagger": "Swagger / OpenAPI",
+    "enlaceGraphiql": "Playground GraphQL"
+  },
+  "Tour": {
+    "reabrir": "Tour guiado",
+    "progreso": "Paso {actual} de {total}",
+    "omitir": "Omitir",
+    "anterior": "Anterior",
+    "siguiente": "Siguiente",
+    "finalizar": "Finalizar",
+    "cuentas": {
+      "titulo": "Tus cuentas y saldos",
+      "cuerpo": "Aquí ves tus cuentas y el saldo de cada una, formateado en pesos chilenos (es-CL)."
+    },
+    "transferir": {
+      "titulo": "Inicia una transferencia",
+      "cuerpo": "Elige la cuenta de origen, ingresa la cuenta destino y el monto. Verás el estado del proceso en vivo."
+    },
+    "historial": {
+      "titulo": "Revisa el historial",
+      "cuerpo": "Cada transferencia aparece aquí como enviada o recibida, con su estado. Se actualiza tras transferir."
+    }
+  },
+  "Panel": {
+    "titulo": "Panel",
+    "clientePorDefecto": "cliente",
+    "errorTitulo": "No pudimos cargar tus datos.",
+    "errorSinRut": "No se pudo determinar tu RUT para consultar tus productos. Configura DEMO_RUT o mapea el claim 'rut' en Keycloak.",
+    "errorBffGenerico": "Ocurrió un error al consultar el BFF.",
+    "tituloCuentas": "Cuentas y saldos",
+    "tituloTransferir": "Iniciar transferencia",
+    "tituloHistorial": "Historial de transferencias",
+    "sinCuentasParaTransferir": "Necesitas al menos una cuenta de origen para transferir.",
+    "cuentaGenerica": "Cuenta",
+    "sinCuentas": "No tienes cuentas registradas.",
+    "sinMovimientos": "Aún no registras movimientos.",
+    "colFecha": "Fecha",
+    "colMovimiento": "Movimiento",
+    "colEstado": "Estado",
+    "colMonto": "Monto",
+    "movimientoEnviada": "Enviada",
+    "movimientoRecibida": "Recibida",
+    "montoVacio": "—"
+  },
+  "FormularioTransferencia": {
+    "titulo": "Iniciar transferencia",
+    "cuentaOrigen": "Cuenta de origen",
+    "seleccionaCuenta": "Selecciona una cuenta",
+    "cuentaGenerica": "Cuenta",
+    "cuentaDestino": "Cuenta de destino (id)",
+    "cuentaDestinoPlaceholder": "Identificador de la cuenta destino",
+    "monto": "Monto (CLP)",
+    "montoPlaceholder": "Ej. 25000",
+    "transferir": "Transferir",
+    "procesando": "Procesando…",
+    "enviando": "Enviando la transferencia…",
+    "exito": "✓ {mensaje} Estado: {estado} · id {id}…",
+    "error": "✕ {mensaje}{detalle}"
+  },
+  "Transferencia": {
+    "sesionExpirada": "Tu sesión expiró. Vuelve a iniciar sesión para transferir.",
+    "seleccionaCuentas": "Selecciona la cuenta de origen y la cuenta de destino.",
+    "cuentasDistintas": "La cuenta de origen y la de destino deben ser distintas.",
+    "montoInvalido": "Ingresa un monto válido en pesos (entero positivo).",
+    "procesada": "La transferencia fue procesada."
+  }
+}

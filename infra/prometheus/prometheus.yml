@@ -1,0 +1,51 @@
+# Configuración de Prometheus para Antu Bank (tarea 11.1, Requisito 11, criterios 1 y 2).
+#
+# Prometheus scrapea el endpoint de Actuator /actuator/prometheus de cada microservicio, donde
+# Micrometer expone las métricas en formato de exposición de Prometheus. En el perfil "local" los
+# servicios Spring corren en el host (fuera de Compose), por lo que se los alcanza vía
+# host.docker.internal (mapeado en docker-compose.yml con extra_hosts a host-gateway).
+#
+# Puertos de los servicios (ver application.yml de cada uno):
+#   api-gateway ........ 8080
+#   account-service .... 8082
+#   ledger-service ..... 8083
+#   transfer-service ... 8084
+#   fraud-service ...... 8085
+#   notification-service 8086
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: antu-bank
+    env: local
+
+scrape_configs:
+  # Auto-monitoreo de Prometheus.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Microservicios Spring Boot. metrics_path apunta al endpoint de Actuator de Prometheus.
+  # La etiqueta "service" se usa en los dashboards de Grafana para agrupar por microservicio.
+  - job_name: antu-services
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: api-gateway
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          service: account-service
+      - targets: ["host.docker.internal:8083"]
+        labels:
+          service: ledger-service
+      - targets: ["host.docker.internal:8084"]
+        labels:
+          service: transfer-service
+      - targets: ["host.docker.internal:8085"]
+        labels:
+          service: fraud-service
+      - targets: ["host.docker.internal:8086"]
+        labels:
+          service: notification-service

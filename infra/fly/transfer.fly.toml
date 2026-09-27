@@ -1,0 +1,47 @@
+# =============================================================================
+# Fly.io — transfer-service (tarea 12a.3, Requisito 12, criterio 1).
+# =============================================================================
+# Servicio INTERNO representativo (no público). Se alcanza solo por la red privada de
+# Fly (antu-bank-transfer.internal:8084). Usa el PostgreSQL gestionado (schema "transfer"),
+# el Kafka gestionado (outbox producer) y llama al ledger por .internal.
+#
+# El resto de servicios internos (account/ledger/fraud/notification) se despliegan con un
+# fly.toml análogo: cambiar `app`, `[build].dockerfile`, `internal_port` y sus variables.
+#
+# Despliegue (ver infra/README-deploy.md):
+#   fly deploy -c infra/fly/transfer.fly.toml --dockerfile services/transfer-service/Dockerfile
+#
+# Secretos (DEMO_DB_*, KAFKA_*) NUNCA en el repo: se cargan con `fly secrets set`.
+
+app = "antu-bank-transfer"
+primary_region = "scl"
+
+[build]
+  dockerfile = "../../services/transfer-service/Dockerfile"
+
+[env]
+  SPRING_PROFILES_ACTIVE = "demo"
+  SERVER_PORT = "8084"
+  KAFKA_SECURITY_PROTOCOL = "SASL_SSL"
+  KAFKA_SASL_MECHANISM = "SCRAM-SHA-256"
+  # Ledger por la red privada de Fly.
+  LEDGER_BASE_URL = "http://antu-bank-ledger.internal:8083"
+  # Secretos inyectados con `fly secrets set` (no en el repo):
+  #   DEMO_DB_URL, DEMO_DB_USER, DEMO_DB_PASSWORD
+  #   KAFKA_BOOTSTRAP_SERVERS, KAFKA_SASL_JAAS_CONFIG
+  #   KEYCLOAK_ISSUER_URI
+
+# Servicio interno: expone el puerto SOLO en la red privada (6PN), sin handlers públicos.
+[[services]]
+  internal_port = 8084
+  protocol = "tcp"
+  # Sin [[services.ports]] públicos => no accesible desde internet, solo por .internal.
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

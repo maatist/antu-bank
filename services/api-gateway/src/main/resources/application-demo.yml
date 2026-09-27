@@ -1,0 +1,48 @@
+# =============================================================================
+# Perfil "demo" — api-gateway (tarea 12a.2, Requisito 12, criterios 2 y 7).
+# =============================================================================
+# Se activa SOLO en el despliegue público reducido (SPRING_PROFILES_ACTIVE=demo). NO altera el
+# perfil por defecto (local). El gateway es sin estado (no tiene base de datos ni Kafka).
+#
+# En el stack reducido los servicios downstream se alcanzan por su nombre de contenedor en la red
+# interna del compose. Se sobreescriben aquí los defaults locales (localhost:*) para que tanto el
+# enrutamiento como el BFF GraphQL apunten a los servicios del stack demo. Configurable por entorno
+# para el PaaS. Sin secretos hardcodeados.
+# -----------------------------------------------------------------------------
+# Swagger público a través del gateway (tarea 12a.5, Requisito 12, criterio 4).
+# -----------------------------------------------------------------------------
+# En la topología demo el gateway es el ÚNICO servicio público; los microservicios REST
+# (account/ledger/transfer) son privados y no se alcanzan desde internet. Para que la
+# documentación OpenAPI/Swagger sea navegable públicamente (checklist de despliegue:
+# https://<gateway>/swagger-ui.html) se añaden, solo en el perfil demo, rutas que reenvían la
+# Swagger UI y el JSON de OpenAPI del account-service (contrato REST de referencia) a través del
+# borde. Esas rutas se definen como un RouteLocator en Java activo solo bajo el perfil demo
+# (ver SwaggerProxyRouteConfig), para NO reemplazar la lista de rutas de negocio de application.yml
+# (en YAML, una lista en el perfil sustituye —no fusiona— la del archivo base). En local NO se
+# agregan estas rutas: cada servicio expone su propio Swagger en su puerto, así el perfil por
+# defecto queda intacto.
+#
+# El playground GraphQL (GraphiQL) ya es público en todos los perfiles: la UI /graphiql y el
+# endpoint /graphql los sirve el propio gateway (Spring for GraphQL) y SecurityConfig permite
+# /graphiql/** sin token (las queries de `me` sí exigen Bearer). Ver SecurityConfig.
+
+antubank:
+  gateway:
+    bff:
+      account-service-uri: ${ACCOUNT_SERVICE_URI:http://account-service:8082}
+      ledger-service-uri: ${LEDGER_SERVICE_URI:http://ledger-service:8083}
+      transfer-service-uri: ${TRANSFER_SERVICE_URI:http://transfer-service:8084}
+    # -------------------------------------------------------------------------
+    # CORS en la demo pública (tarea 13.5, Requisito 13, criterio 5). En producción el frontend vive
+    # en Vercel (otro origen), por lo que ALLOWED_ORIGINS DEBE fijarse al dominio real de Vercel al
+    # desplegar, p. ej. ALLOWED_ORIGINS=https://antu-bank.vercel.app (varios separados por comas). NO
+    # se hardcodea el dominio aquí; el default de desarrollo (localhost:3000) del application.yml base
+    # NO sirve para el frontend público. Placeholder de referencia (sobreescribir por entorno):
+    #   ALLOWED_ORIGINS=https://<tu-app>.vercel.app
+    cors:
+      allowed-origins: ${ALLOWED_ORIGINS:https://antu-bank.vercel.app}
+
+# Nota: los defaults de las rutas del gateway y del BFF reutilizan las variables ACCOUNT_SERVICE_URI,
+# LEDGER_SERVICE_URI y TRANSFER_SERVICE_URI. En el compose demo se fijan esas variables a los
+# nombres de contenedor, por lo que el bloque anterior solo asegura defaults coherentes cuando no
+# se inyectan por entorno.

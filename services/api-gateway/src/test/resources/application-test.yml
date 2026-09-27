@@ -1,0 +1,92 @@
+# Configuración de test del api-gateway.
+#
+# Objetivo: cargar el contexto y ejercitar el enrutamiento sin depender de Keycloak.
+#
+# Se fija un jwk-set-uri "dummy" en lugar de issuer-uri. Usar issuer-uri dispararía el
+# OIDC discovery (llamada de red a Keycloak) al construir el ReactiveJwtDecoder; con
+# jwk-set-uri el decoder se crea de forma perezosa y no se contacta la red al arrancar
+# (bajo el perfil test la cadena de seguridad permite todo, así que el decoder no se usa).
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:0/dummy-jwks
+  cloud:
+    gateway:
+      # Las rutas de test apuntan a puertos DEAD (nadie escucha) y llevan el filtro CircuitBreaker
+      # con fallbackUri. Así una petición a /api/accounts/** falla en el downstream y el breaker la
+      # desvía al FallbackController (503 ProblemDetail), ejercitando la tarea 9.2 sin servicios
+      # reales. El TimeLimiter acota la espera para que el test sea rápido y determinista.
+      routes:
+        - id: account-service
+          uri: http://localhost:18082
+          predicates:
+            - Path=/api/accounts/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: accountsCircuitBreaker
+                fallbackUri: forward:/fallback/accounts
+        - id: ledger-service
+          uri: http://localhost:18083
+          predicates:
+            - Path=/api/transactions/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: transactionsCircuitBreaker
+                fallbackUri: forward:/fallback/transactions
+        - id: transfer-service
+          # URI configurable por propiedad para que GatewayRoutingIntegrationTest pueda reapuntar
+          # esta ruta a un downstream de prueba vivo (camino feliz del enrutamiento). Por defecto
+          # apunta a un puerto DEAD, como el resto, para el test de fallback del circuit breaker.
+          uri: ${GATEWAY_TEST_TRANSFER_URI:http://localhost:18084}
+          predicates:
+            - Path=/api/transfers/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: transfersCircuitBreaker
+                fallbackUri: forward:/fallback/transfers
+
+# Rate limiting con capacidad alta en tests: no debe interferir con el resto de las pruebas.
+# El comportamiento del limitador se verifica de forma aislada en RateLimitingGlobalFilterTest.
+antubank:
+  gateway:
+    rate-limit:
+      enabled: true
+      capacity: 1000
+      window-seconds: 1
+
+# Resilience4j en tests: timeout corto y umbral bajo para que el fallback se dispare rápido cuando
+# el downstream (puerto dead) no responde.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowSize: 4
+        minimumNumberOfCalls: 1
+        failureRateThreshold: 50
+        waitDurationInOpenState: 5s
+    instances:
+      accountsCircuitBreaker:
+        baseConfig: default
+      transactionsCircuitBreaker:
+        baseConfig: default
+      transfersCircuitBreaker:
+        baseConfig: default
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 2s
+    instances:
+      accountsCircuitBreaker:
+        baseConfig: default
+      transactionsCircuitBreaker:
+        baseConfig: default
+      transfersCircuitBreaker:
+        baseConfig: default

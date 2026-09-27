@@ -1,0 +1,137 @@
+# =============================================================================
+# values.example.yaml — ejemplo de configuración para EKS (Requisito 12, criterios 5 y 7).
+# =============================================================================
+# COPIA este archivo a un values PROPIO (p. ej. values.prod.yaml, NO versionado) y ajústalo:
+#
+#   cp values.example.yaml values.prod.yaml
+#   helm upgrade --install antu-bank . -n antu-bank --create-namespace -f values.prod.yaml
+#
+# IMPORTANTE — MANEJO DE SECRETOS:
+#   - Este archivo SOLO contiene PLACEHOLDERS. NUNCA pongas credenciales reales aquí ni las
+#     subas al repositorio.
+#   - En producción, crea los Secrets FUERA del chart y referéncialos con `existingSecret`:
+#
+#       kubectl -n antu-bank create secret generic account-service-secrets \
+#         --from-literal=ACCOUNT_DB_PASSWORD='***' \
+#         --from-literal=SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG='org.apache.kafka.common.security.scram.ScramLoginModule required username="***" password="***";'
+#
+#     (Mejor aún: External Secrets Operator + AWS Secrets Manager, o SealedSecrets).
+
+image:
+  registry: 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  repositoryPrefix: antubank
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+# Perfil por defecto = stack completo y fiel (database-per-service estricto).
+springProfilesActive: "default"
+
+global:
+  env:
+    KEYCLOAK_ISSUER_URI: "https://auth.antubank.example.com/realms/antu-bank"
+    KAFKA_BOOTSTRAP_SERVERS: "b-1.antubankmsk.abcde.c2.kafka.us-east-1.amazonaws.com:9096,b-2.antubankmsk.abcde.c2.kafka.us-east-1.amazonaws.com:9096"
+    SPRING_KAFKA_SECURITY_PROTOCOL: "SASL_SSL"
+    SPRING_KAFKA_PROPERTIES_SASL_MECHANISM: "SCRAM-SHA-512"
+    TRACING_SAMPLING_PROBABILITY: "0.1"
+    OTLP_TRACING_ENDPOINT: "http://jaeger-collector.observability:4318/v1/traces"
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    labels:
+      release: kube-prometheus-stack
+
+services:
+  api-gateway:
+    enabled: true
+    port: 8080
+    replicaCount: 2
+    env:
+      GATEWAY_PORT: "8080"
+      ACCOUNT_SERVICE_URI: "http://antu-bank-account-service:8082"
+      LEDGER_SERVICE_URI: "http://antu-bank-ledger-service:8083"
+      TRANSFER_SERVICE_URI: "http://antu-bank-transfer-service:8084"
+    # El gateway solo necesita el JAAS de Kafka si publicara/consumiera; aquí no persiste ni usa Kafka.
+    existingSecret: ""
+
+  account-service:
+    enabled: true
+    port: 8082
+    env:
+      ACCOUNT_SERVICE_PORT: "8082"
+      # RDS PROPIA de account (una base por servicio).
+      ACCOUNT_DB_URL: "jdbc:postgresql://antu-account.abcde.us-east-1.rds.amazonaws.com:5432/account"
+      ACCOUNT_DB_USER: "account"
+    # Secret con ACCOUNT_DB_PASSWORD (RDS de account).
+    existingSecret: "account-service-secrets"
+
+  ledger-service:
+    enabled: true
+    port: 8083
+    env:
+      LEDGER_SERVICE_PORT: "8083"
+      # RDS PROPIA de ledger.
+      LEDGER_DB_URL: "jdbc:postgresql://antu-ledger.abcde.us-east-1.rds.amazonaws.com:5432/ledger"
+      LEDGER_DB_USER: "ledger"
+    # Secret con LEDGER_DB_PASSWORD + SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG (consumer de MSK).
+    existingSecret: "ledger-service-secrets"
+
+  transfer-service:
+    enabled: true
+    port: 8084
+    env:
+      TRANSFER_SERVICE_PORT: "8084"
+      # RDS PROPIA de transfer.
+      TRANSFER_DB_URL: "jdbc:postgresql://antu-transfer.abcde.us-east-1.rds.amazonaws.com:5432/transfer"
+      TRANSFER_DB_USER: "transfer"
+      LEDGER_BASE_URL: "http://antu-bank-ledger-service:8083"
+    # Secret con TRANSFER_DB_PASSWORD + SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG (producer de MSK / outbox).
+    existingSecret: "transfer-service-secrets"
+
+  fraud-service:
+    enabled: true
+    port: 8085
+    env:
+      FRAUD_SERVICE_PORT: "8085"
+    # Stateless: solo SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG (consumer/producer de MSK).
+    existingSecret: "fraud-service-secrets"
+
+  notification-service:
+    enabled: true
+    port: 8086
+    env:
+      NOTIFICATION_SERVICE_PORT: "8086"
+    # Stateless: solo SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG (consumer de MSK).
+    existingSecret: "notification-service-secrets"
+
+ingress:
+  enabled: true
+  service: api-gateway
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  hosts:
+    - host: api.antubank.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+keycloak:
+  enabled: true
+  replicaCount: 1
+  env:
+    KC_DB: postgres
+    KC_DB_URL: "jdbc:postgresql://antu-keycloak.abcde.us-east-1.rds.amazonaws.com:5432/keycloak"
+    KC_DB_USERNAME: keycloak
+    KC_HOSTNAME: "auth.antubank.example.com"
+  # Secret con KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD, KC_DB_PASSWORD.
+  existingSecret: "keycloak-secrets"
+  # ConfigMap con el realm-export.json:
+  #   kubectl -n antu-bank create configmap keycloak-realm \
+  #     --from-file=antu-bank-realm.json=infra/keycloak/realm-export.json
+  realmConfigMap: "keycloak-realm"

@@ -1,0 +1,185 @@
+# =============================================================================
+# cd.yml — Publicación de imágenes a ECR + despliegue on-demand a EKS
+# =============================================================================
+# Cubre la tarea 12b.3 (imagen a registry + deploy) y el Requisito 12 (criterio 5:
+# Terraform + K8s/Helm ejecutables on-demand; criterio 6: evitar costos permanentes).
+#
+# FILOSOFÍA on-demand (evidencia de skill cloud, sin costo permanente):
+#   - Job `build-and-push`: construye y publica las 6 imágenes a Amazon ECR.
+#     Corre automáticamente en push a `main` y en tags `v*`. Publicar en ECR es
+#     barato (solo almacenamiento de imágenes) y no levanta el clúster EKS.
+#   - Job `deploy`: ejecuta `helm upgrade --install` contra EKS. SOLO corre de
+#     forma MANUAL (workflow_dispatch con deploy=true) y protegido por el
+#     Environment `aws-eks`. Así el clúster (que sí cuesta) nunca se levanta
+#     ni recibe despliegues por accidente. El teardown se hace con
+#     `helm uninstall` + `terraform destroy` (ver tarea 12b.4).
+#
+# AUTENTICACIÓN A AWS: exclusivamente por OIDC (federación de identidad de
+# GitHub Actions). NO se usan claves de acceso de larga duración (AWS_ACCESS_KEY_ID
+# / AWS_SECRET_ACCESS_KEY). El workflow asume un rol IAM vía `role-to-assume`.
+#
+# SECRETOS / VARIABLES requeridos (ver .github/README.md). NADA se hardcodea:
+#   Secrets:
+#     AWS_ROLE_ARN          ARN del rol IAM a asumir vía OIDC.
+#   Variables (Repository/Environment Variables):
+#     AWS_REGION            Región AWS (p. ej. us-east-1).
+#     ECR_REGISTRY          Registry ECR (<account-id>.dkr.ecr.<region>.amazonaws.com).
+#     ECR_REPOSITORY_PREFIX Prefijo de repos ECR (por defecto: antubank).
+#     EKS_CLUSTER_NAME      Nombre del clúster EKS (solo para el deploy).
+# =============================================================================
+name: CD
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  # Ejecución manual: permite además disparar el despliegue a EKS (on-demand).
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Desplegar a EKS con Helm tras publicar las imágenes (on-demand, levanta costo)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # requerido por OIDC (configure-aws-credentials).
+
+env:
+  # Prefijo de repos ECR; usa la variable si está definida, si no el default del chart/terraform.
+  ECR_REPOSITORY_PREFIX: ${{ vars.ECR_REPOSITORY_PREFIX || 'antubank' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Construye y publica una imagen por servicio en ECR (matriz sobre los 6).
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build & push imagen (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # Los 6 microservicios; el nombre coincide con services/<service>/Dockerfile
+        # y con el repositorio ECR "<prefijo>/<service>" (ver infra/terraform/ecr.tf).
+        service:
+          - api-gateway
+          - account-service
+          - ledger-service
+          - transfer-service
+          - fraud-service
+          - notification-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Autenticar en AWS vía OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Etiquetas: SHA corto siempre; `latest` solo en la rama main.
+      - name: Calcular tags de la imagen
+        id: meta
+        run: |
+          registry="${{ steps.ecr.outputs.registry }}"
+          repo="${registry}/${ECR_REPOSITORY_PREFIX}/${{ matrix.service }}"
+          sha="$(git rev-parse --short HEAD)"
+          tags="${repo}:${sha}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            tags="${tags},${repo}:latest"
+          fi
+          # En tags de versión (v1.2.3) publica también esa versión sin la "v".
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            tags="${tags},${repo}:${version}"
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "Tags a publicar: ${tags}"
+
+      # El contexto de build es la RAÍZ del monorepo (lo exige el Dockerfile:
+      # necesita settings.gradle.kts, build-logic, el version catalog y common-domain).
+      - name: Build y push a ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  # ---------------------------------------------------------------------------
+  # Despliegue on-demand a EKS con Helm. MANUAL y protegido por Environment.
+  # No corre en push automático: solo con workflow_dispatch + deploy=true.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy a EKS (Helm · on-demand)
+    needs: build-and-push
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # El Environment `aws-eks` permite exigir aprobación manual (protección) y
+    # aloja las variables/secretos específicos del despliegue. Refuerza el
+    # carácter on-demand: nadie levanta costo sin pasar por esta puerta.
+    environment: aws-eks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Autenticar en AWS vía OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Instalar Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      # Actualiza el kubeconfig para apuntar kubectl/helm al clúster EKS.
+      - name: Configurar kubeconfig de EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ vars.EKS_CLUSTER_NAME }}" \
+            --region "${{ vars.AWS_REGION }}"
+
+      # Instala/actualiza el release (idempotente) con la imagen recién publicada.
+      # El resto de valores sensibles (RDS, MSK, hosts) llega desde un values PROPIO
+      # NO versionado, materializado aquí desde el secret HELM_VALUES.
+      # Los Secrets de Kubernetes (passwords, JAAS) se crean fuera del chart y se
+      # referencian con existingSecret (ver infra/helm/README.md).
+      - name: Materializar values de Helm desde secret
+        run: printf '%s' "${{ secrets.HELM_VALUES }}" > values.deploy.yaml
+
+      - name: helm upgrade --install
+        run: |
+          image_tag="$(git rev-parse --short HEAD)"
+          helm upgrade --install antu-bank infra/helm/antu-bank \
+            --namespace antu-bank --create-namespace \
+            -f values.deploy.yaml \
+            --set image.registry="${{ vars.ECR_REGISTRY }}" \
+            --set image.repositoryPrefix="${ECR_REPOSITORY_PREFIX}" \
+            --set image.tag="${image_tag}" \
+            --wait --timeout 10m
+
+      - name: Verificar rollout del gateway
+        run: |
+          kubectl -n antu-bank rollout status deploy/antu-bank-api-gateway --timeout=5m
+
+      - name: Limpiar values sensibles
+        if: ${{ always() }}
+        run: rm -f values.deploy.yaml

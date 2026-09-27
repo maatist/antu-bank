@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# Schema del BFF GraphQL del api-gateway (tarea 9.3, Requisito 9, criterios 5 y 6).
+#
+# Este schema define un contrato de agregación para el frontend (ADR-008: GraphQL como BFF sobre
+# REST internos). La query raíz `me` resuelve la vista del cliente autenticado combinando tres
+# servicios REST internos en una sola respuesta:
+#   - account-service   GET /accounts?rut=            -> cuentas del titular
+#   - ledger-service     GET /transactions/balances/{accountId} -> saldo derivado por cuenta
+#   - transfer-service   historial de transferencias   -> movimientos del cliente
+#
+# Identidad del cliente: los tokens de los usuarios demo de Keycloak NO mapean el atributo `rut`
+# como claim del JWT (ver infra/keycloak/realm-export.json: `rut` es un atributo de usuario sin
+# protocol mapper). Por eso `me` acepta un argumento opcional `rut` para la demo. Cuando no se
+# entrega, el resolver intenta derivarlo del claim `rut` del JWT si existiera; si tampoco está,
+# la query falla con un error claro. El Bearer token entrante se propaga a cada llamada downstream.
+#
+# Los montos se exponen en minor units (para CLP, pesos enteros) para no perder precisión, tal
+# como lo hacen los servicios internos (BalanceResponse.amountMinor, TransferResponse.amountMinor).
+# ---------------------------------------------------------------------------
+
+# Enteros de 64 bits (minor units, timestamps epoch-millis). Definido como escalar propio para no
+# depender de librerías de escalares externas; se serializa como número JSON.
+scalar Long
+
+type Query {
+    "Vista agregada del cliente autenticado: sus cuentas, saldos e historial de transferencias."
+    me(rut: String): Me
+}
+
+"Agregado del cliente: identidad + cuentas (con su saldo) + historial de transferencias."
+type Me {
+    "RUT del titular en formato chileno (ej. 12.345.678-5)."
+    rut: String!
+    "Cuentas del titular. Cada cuenta expone su saldo derivado (resuelto contra ledger-service)."
+    accounts: [Account!]!
+    "Historial de transferencias del cliente (movimientos)."
+    transfers: [Transfer!]!
+}
+
+"Cuenta bancaria del titular. Refleja la respuesta REST de account-service (AccountResponse)."
+type Account {
+    id: ID!
+    "RUT del titular en formato chileno."
+    holderRut: String!
+    "Nombre del titular."
+    holderName: String
+    "Tipo de cuenta (CORRIENTE / VISTA / AHORRO)."
+    accountType: String
+    "Código de banco chileno."
+    bank: String
+    "Nombre comercial del banco."
+    bankName: String
+    "Moneda de la cuenta (CLP / USD / UF)."
+    currency: String
+    "Estado de la cuenta."
+    status: String
+    "Saldo derivado de la cuenta, resuelto contra ledger-service (campo anidado del BFF)."
+    balance: Money
+}
+
+"Saldo o monto de dinero en una moneda. Refleja BalanceResponse del ledger-service."
+type Money {
+    "Saldo en minor units, con signo (para CLP, pesos enteros)."
+    amountMinor: Long!
+    "Saldo en unidades mayores, con signo, según la escala de la moneda."
+    amount: String!
+    "Moneda del saldo (CLP / USD / UF)."
+    currency: String!
+}
+
+"Transferencia del cliente. Refleja la respuesta REST de transfer-service (TransferResponse)."
+type Transfer {
+    id: ID!
+    "Estado de la transferencia (PENDING / CONFIRMED / REJECTED)."
+    status: String
+    "Cuenta origen."
+    sourceAccountId: ID
+    "Cuenta destino."
+    destinationAccountId: ID
+    "Monto en minor units (CLP: pesos enteros)."
+    amountMinor: Long!
+    "Moneda."
+    currency: String
+    "Fecha de creación (ISO-8601)."
+    createdAt: String
+}

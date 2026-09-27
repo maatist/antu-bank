@@ -1,0 +1,11 @@
+# Patrones de archivos que Helm NO debe empaquetar en el chart.
+.DS_Store
+.git/
+.gitignore
+*.tmp
+*.bak
+*.orig
+*.swp
+# Documentación y ejemplos (no forman parte del artefacto instalable).
+README.md
+values.example.yaml

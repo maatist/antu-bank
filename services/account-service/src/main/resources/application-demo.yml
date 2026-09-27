@@ -1,0 +1,34 @@
+# =============================================================================
+# Perfil "demo" — account-service (tarea 12a.2, Requisito 12, criterios 2 y 7).
+# =============================================================================
+# Este perfil se activa SOLO en el despliegue público reducido (PaaS gratuito) mediante
+# SPRING_PROFILES_ACTIVE=demo. NO altera el perfil por defecto (local), que conserva el
+# database-per-service estricto (Requisito 12, criterio 7): un PostgreSQL propio por servicio.
+#
+# Configuración reducida (Requisito 12, criterio 2):
+#   - Un ÚNICO PostgreSQL compartido por todos los servicios, aislado por SCHEMA por servicio.
+#     account-service usa el schema "account". Las migraciones Flyway y el datasource apuntan a
+#     ese schema (currentSchema + default-schema), de modo que las tablas de cada servicio no
+#     colisionan pese a compartir instancia y base de datos.
+#   - Kafka gestionado gratuito (Upstash/Redpanda) vía SASL_SSL; account-service no usa Kafka.
+#
+# Todos los secretos se parametrizan por variables de entorno (sin credenciales hardcodeadas).
+spring:
+  datasource:
+    # Un solo servidor PostgreSQL (DEMO_DB_URL) y una sola base (DEMO_DB_NAME) para todos los
+    # servicios; el aislamiento se logra con currentSchema=account. El default local
+    # (jdbc:postgresql://postgres:5432/neobank?currentSchema=account) apunta al contenedor
+    # "postgres" de infra/docker-compose.demo.yml.
+    url: ${ACCOUNT_DB_URL:${DEMO_DB_URL:jdbc:postgresql://postgres:5432/neobank}?currentSchema=account}
+    username: ${DEMO_DB_USER:neobank}
+    password: ${DEMO_DB_PASSWORD:neobank}
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    # Flyway crea (si no existe) y usa el schema "account"; ahí registra su tabla de historial
+    # (flyway_schema_history) y ejecuta las migraciones. Así las migraciones de cada servicio
+    # quedan confinadas a su propio schema dentro de la base compartida.
+    schemas: account
+    default-schema: account
+    create-schemas: true

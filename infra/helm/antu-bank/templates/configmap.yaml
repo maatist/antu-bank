@@ -1,0 +1,33 @@
+{{/*
+=============================================================================
+ConfigMap por microservicio: variables de entorno NO sensibles.
+Incluye:
+  - config global compartida (.Values.global.env): perfil Spring, issuer de Keycloak,
+    bootstrap de Kafka (MSK), protocolo/mecanismo SASL, muestreo de trazas, OTLP.
+  - config propia del servicio (svc.env): puerto, URIs de datasource (sin credenciales),
+    URIs de servicios internos, etc.
+Los valores SENSIBLES (password de DB, jaas.config de Kafka) NO van aquí, van en el Secret.
+=============================================================================
+*/}}
+{{- $root := . -}}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "antu-bank.service.fullname" (dict "root" $root "name" $name) }}
+  labels:
+    {{- include "antu-bank.service.labels" (dict "root" $root "name" $name) | nindent 4 }}
+data:
+  SPRING_PROFILES_ACTIVE: {{ $root.Values.springProfilesActive | quote }}
+  {{- /* Config común a todos los servicios (Keycloak issuer, Kafka MSK, trazas). */}}
+  {{- range $k, $v := $root.Values.global.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- /* Config no sensible propia del servicio. */}}
+  {{- range $k, $v := $svc.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

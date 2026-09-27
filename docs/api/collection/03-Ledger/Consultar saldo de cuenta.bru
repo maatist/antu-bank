@@ -1,0 +1,36 @@
+meta {
+  name: Consultar saldo de cuenta
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{ledgerUrl}}/transactions/balances/{{accountId}}?currency=CLP
+  body: none
+  auth: bearer
+}
+
+params:query {
+  currency: CLP
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept-Language: es
+}
+
+tests {
+  test("responde 200 con saldo", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("amountMinor");
+  });
+}
+
+docs {
+  Consulta el saldo derivado de la cuenta origen en CLP. El saldo NO se persiste: se calcula
+  sumando los asientos con signo de la cuenta. Tras el fondeo anterior debería reflejar
+  +$100.000 (100000 en minor units). Solo requiere autenticación.
+}

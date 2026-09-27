@@ -1,0 +1,36 @@
+meta {
+  name: Listar historial de transferencias
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{transferUrl}}/transfers?accountId={{accountId}}
+  body: none
+  auth: bearer
+}
+
+params:query {
+  accountId: {{accountId}}
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept-Language: es
+}
+
+tests {
+  test("responde 200 con una lista", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.be.an("array");
+  });
+}
+
+docs {
+  Lista el historial de transferencias de la cuenta (movimientos en los que participa como
+  origen o destino), de la más reciente a la más antigua. Es la consulta que alimenta el
+  historial del BFF GraphQL. Solo requiere autenticación.
+}

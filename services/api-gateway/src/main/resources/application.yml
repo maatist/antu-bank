@@ -1,0 +1,200 @@
+spring:
+  application:
+    name: api-gateway
+
+  # ---------------------------------------------------------------------------
+  # Spring Cloud Gateway (reactivo / WebFlux). Enruta el tráfico externo a los
+  # servicios internos (tarea 9.1, Requisito 9, criterio 1).
+  #
+  # Estrategia de paths: todo el tráfico de negocio entra bajo el prefijo /api/**.
+  # El filtro StripPrefix=1 elimina el segmento /api antes de reenviar, de modo que
+  # el downstream recibe su path nativo:
+  #   /api/accounts/**       -> account-service  GET/POST /accounts/**
+  #   /api/transactions/**   -> ledger-service    /transactions/**  (saldos, asientos)
+  #   /api/transfers/**      -> transfer-service   /transfers/**
+  #
+  # Los URIs downstream son configurables por entorno (ACCOUNT_SERVICE_URI, etc.) con
+  # defaults locales que apuntan a los puertos de cada servicio (8082/8083/8084).
+  #
+  # Propagación de token (Requisito 9, criterio 2): Spring Cloud Gateway reenvía por
+  # defecto los headers entrantes, incluido Authorization: Bearer <JWT>. No se elimina
+  # ese header en ninguna ruta, por lo que el token llega intacto a los servicios
+  # downstream, que lo validan como resource servers (tarea 8.2). Adicionalmente, el
+  # gateway valida el JWT en el borde (ver SecurityConfig, design.md sección 7).
+  # ---------------------------------------------------------------------------
+  cloud:
+    gateway:
+      # No filtrar el header Authorization globalmente: debe propagarse a downstream.
+      default-filters: []
+      # Cada ruta lleva un filtro CircuitBreaker (Resilience4j) con fallbackUri hacia el
+      # FallbackController (tarea 9.2, Requisito 9, criterio 4). Si el downstream falla o supera su
+      # timeout, el breaker se abre y la petición se reenvía al fallback, que responde 503 con
+      # ProblemDetail. Las instancias Resilience4j se configuran más abajo (bloque resilience4j).
+      routes:
+        - id: account-service
+          uri: ${ACCOUNT_SERVICE_URI:http://localhost:8082}
+          predicates:
+            - Path=/api/accounts/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: accountsCircuitBreaker
+                fallbackUri: forward:/fallback/accounts
+        - id: ledger-service
+          uri: ${LEDGER_SERVICE_URI:http://localhost:8083}
+          predicates:
+            - Path=/api/transactions/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: transactionsCircuitBreaker
+                fallbackUri: forward:/fallback/transactions
+        - id: transfer-service
+          uri: ${TRANSFER_SERVICE_URI:http://localhost:8084}
+          predicates:
+            - Path=/api/transfers/**
+          filters:
+            - StripPrefix=1
+            - name: CircuitBreaker
+              args:
+                name: transfersCircuitBreaker
+                fallbackUri: forward:/fallback/transfers
+
+  # ---------------------------------------------------------------------------
+  # GraphQL BFF (tarea 9.3, Requisito 9, criterios 5 y 6). Spring for GraphQL expone el endpoint
+  # HTTP /graphql y la UI GraphiQL en /graphiql como playground (criterio 6). El schema
+  # (graphql/schema.graphqls) define la query `me` que agrega los REST internos (criterio 5).
+  #
+  # El endpoint /graphql exige JWT (expone datos del usuario vía `me`); la UI /graphiql se sirve
+  # pública para poder cargarla, pero las queries necesitan un Bearer token (ver SecurityConfig).
+  # ---------------------------------------------------------------------------
+  graphql:
+    graphiql:
+      enabled: true              # playground GraphiQL en /graphiql (Requisito 9, criterio 6)
+    schema:
+      printer:
+        enabled: true            # expone el SDL en /graphql/schema (útil para la demo)
+
+  # Seguridad: resource server OAuth2/OIDC reactivo en el borde (tarea 9.1, Requisito 9,
+  # criterio 2). El gateway valida el JWT de Keycloak contra el JWKS del realm antu-bank
+  # y propaga el token a downstream. issuer-uri configurable por entorno.
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/antu-bank}
+
+# ---------------------------------------------------------------------------
+# Rate limiting en el borde (tarea 9.2, Requisito 9, criterio 3).
+#
+# Decisión: limitador EN MEMORIA (token bucket de ventana fija) implementado como filtro global
+# (RateLimitingGlobalFilter), en lugar del RequestRateLimiter basado en Redis. Motivo: evitar
+# infraestructura extra (Redis) en una demo de portafolio. Contrapartida: el conteo es por
+# instancia (no distribuido); en multi-instancia se migraría al limitador Redis. Al excederse el
+# límite el gateway responde 429 Too Many Requests. Los límites son configurables por entorno.
+# ---------------------------------------------------------------------------
+antubank:
+  gateway:
+    # -------------------------------------------------------------------------
+    # CORS del borde (tarea 13.5, Requisito 13, criterio 5). El frontend corre en otro origen
+    # (Vercel en prod; localhost:3000 en dev), así que las llamadas del navegador al gateway son
+    # cross-origin. Los orígenes permitidos se inyectan por entorno vía ALLOWED_ORIGINS (lista
+    # separada por comas); default de desarrollo: localhost:3000. NUNCA se usa el comodín '*' con
+    # credenciales (prohibido por CORS e inseguro); el origen de producción se inyecta por entorno,
+    # sin hardcodear. Las cabeceras de seguridad (HSTS, nosniff, frame DENY, referrer, CSP) se
+    # configuran en SecurityConfig (cadena WebFlux reactiva).
+    # -------------------------------------------------------------------------
+    cors:
+      allowed-origins: ${ALLOWED_ORIGINS:http://localhost:3000}
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      capacity: ${RATE_LIMIT_CAPACITY:20}
+      window-seconds: ${RATE_LIMIT_WINDOW_SECONDS:1}
+    # -------------------------------------------------------------------------
+    # URIs de los servicios internos que agrega el BFF GraphQL (tarea 9.3, Requisito 9, criterio 5).
+    # Se reutilizan las mismas variables de entorno que las rutas del gateway (ACCOUNT_SERVICE_URI,
+    # LEDGER_SERVICE_URI, TRANSFER_SERVICE_URI) con los mismos defaults locales, de modo que el BFF
+    # llama a los servicios directamente por REST y propaga el Bearer token entrante.
+    # -------------------------------------------------------------------------
+    bff:
+      account-service-uri: ${ACCOUNT_SERVICE_URI:http://localhost:8082}
+      ledger-service-uri: ${LEDGER_SERVICE_URI:http://localhost:8083}
+      transfer-service-uri: ${TRANSFER_SERVICE_URI:http://localhost:8084}
+
+# ---------------------------------------------------------------------------
+# Resilience4j (tarea 9.2, Requisito 9, criterio 4). Configura las instancias de circuit breaker
+# referenciadas por el filtro CircuitBreaker de cada ruta, más un TimeLimiter que acota el tiempo
+# de espera del downstream. Al superar el umbral de fallos el breaker se ABRE y las peticiones se
+# desvían al fallback sin golpear el downstream; tras waitDurationInOpenState pasa a HALF_OPEN.
+# ---------------------------------------------------------------------------
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50            # % de fallos que abre el circuito
+        waitDurationInOpenState: 10s        # tiempo en estado OPEN antes de probar HALF_OPEN
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+    instances:
+      accountsCircuitBreaker:
+        baseConfig: default
+      transactionsCircuitBreaker:
+        baseConfig: default
+      transfersCircuitBreaker:
+        baseConfig: default
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 3s                 # timeout del downstream; al superarlo cuenta como fallo
+        cancelRunningFuture: true
+    instances:
+      accountsCircuitBreaker:
+        baseConfig: default
+      transactionsCircuitBreaker:
+        baseConfig: default
+      transfersCircuitBreaker:
+        baseConfig: default
+
+# El gateway corre en su propio puerto (por defecto 8080), configurable por entorno.
+server:
+  port: ${GATEWAY_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Observabilidad (tarea 11.1, Requisito 11, criterio 1): se expone /actuator/prometheus para
+        # que Prometheus scrapee las métricas de Micrometer del gateway (incluye latencia/errores/
+        # throughput del borde). Se conserva el endpoint gateway para inspección de rutas.
+        include: health,info,gateway,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      # Etiqueta común aplicada a todas las métricas: permite filtrar/agrupar por servicio en los
+      # dashboards de Grafana (latencia, errores, throughput) — Requisito 11, criterio 2.
+      application: ${spring.application.name}
+    distribution:
+      # Habilita histogramas nativos de percentiles para la latencia de las peticiones HTTP server,
+      # de modo que Grafana pueda calcular p95/p99 con histogram_quantile sobre http_server_requests.
+      percentiles-histogram:
+        http.server.requests: true
+  # Observabilidad — trazas distribuidas OpenTelemetry → Jaeger (tarea 11.2, Requisito 11, criterio 3).
+  # El gateway es el ORIGEN de la traza en el borde: Micrometer Tracing (puente OTel) instrumenta el
+  # server WebFlux y el WebClient reactivo con que enruta a downstream, iniciando el span raíz y
+  # propagando el contexto (traceparent W3C) para que la traza cruce gateway → transfer → ledger.
+  tracing:
+    sampling:
+      # Muestreo 100% en la demo: como el gateway inicia la traza, este valor decide si toda la
+      # cadena downstream se muestrea. Configurable por entorno (en prod se reduciría).
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Exporter OTLP/HTTP hacia el receiver OTLP de Jaeger all-in-one (puerto 4318, path /v1/traces).
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}

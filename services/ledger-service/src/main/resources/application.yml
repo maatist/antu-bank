@@ -1,0 +1,108 @@
+spring:
+  application:
+    name: ledger-service
+
+  datasource:
+    url: ${LEDGER_DB_URL:jdbc:postgresql://localhost:5434/ledger}
+    username: ${LEDGER_DB_USER:ledger}
+    password: ${LEDGER_DB_PASSWORD:ledger}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  # Seguridad: resource server OAuth2/OIDC (tarea 8.2, Requisito 8, criterio 4).
+  # El servicio valida el JWT emitido por Keycloak contra el JWKS del realm antu-bank.
+  # issuer-uri apunta al realm; Spring descubre el jwk-set-uri por OIDC discovery y cachea las
+  # claves para validar la firma localmente (sin llamar a Keycloak por request). Configurable
+  # por entorno (KEYCLOAK_ISSUER_URI) para demo/prod; por defecto el Keycloak local (puerto 8081).
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/antu-bank}
+
+  # Kafka: consumer del evento TransferConfirmed publicado por el relay de transfer-service
+  # (tarea 5.3, Requisito 5, criterios 3 y 5; design.md, secciones 5.2 y 6.2).
+  # Por defecto apunta al broker local de infra/docker-compose.yml (localhost:9092),
+  # con override por entorno para despliegues. El payload viaja como JSON (String) y el
+  # tipo/versión del evento como headers de Kafka (eventType / eventVersion).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      # Grupo de consumo del ledger-service: garantiza que cada evento lo procese una única
+      # instancia del servicio (reparto por particiones entre réplicas del mismo grupo).
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:ledger-service}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Al no haber offset comprometido, leer desde el inicio del topic para no perder eventos
+      # ya publicados antes de que el consumer se una al grupo.
+      auto-offset-reset: earliest
+
+  # Internacionalización: mensajes en español (por defecto) e inglés.
+  messages:
+    basename: messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+  web:
+    locale: es
+    locale-resolver: accept-header
+
+server:
+  port: ${LEDGER_SERVICE_PORT:8083}
+
+# Consumo de eventos de transferencia (tarea 5.3, Requisito 5).
+# El topic debe coincidir con outbox.relay.topic de transfer-service (por defecto transfer.events).
+ledger:
+  events:
+    transfer-topic: ${TRANSFER_EVENTS_TOPIC:transfer.events}
+
+# Documentación OpenAPI / Swagger UI
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Observabilidad (tarea 11.1, Requisito 11, criterio 1): se expone el endpoint
+        # /actuator/prometheus para que Prometheus scrapee las métricas de Micrometer.
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      # Etiqueta común aplicada a todas las métricas: permite filtrar/agrupar por servicio en los
+      # dashboards de Grafana (latencia, errores, throughput) — Requisito 11, criterio 2.
+      application: ${spring.application.name}
+    distribution:
+      # Habilita histogramas nativos de percentiles para la latencia de las peticiones HTTP server,
+      # de modo que Grafana pueda calcular p95/p99 con histogram_quantile sobre http_server_requests.
+      percentiles-histogram:
+        http.server.requests: true
+  # Observabilidad — trazas distribuidas OpenTelemetry → Jaeger (tarea 11.2, Requisito 11, criterio 3).
+  # Micrometer Tracing (puente OTel) instrumenta el consumer Kafka del evento TransferConfirmed y los
+  # endpoints HTTP, continuando la traza propagada desde transfer-service (headers de Kafka) para que
+  # la traza cruce gateway → transfer → ledger.
+  tracing:
+    sampling:
+      # Muestreo 100% en la demo. Al ser continuación de una traza ya iniciada aguas arriba, la
+      # decisión de muestreo se hereda del contexto propagado; este valor aplica a trazas nacidas aquí.
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Exporter OTLP/HTTP hacia el receiver OTLP de Jaeger all-in-one (puerto 4318, path /v1/traces).
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}

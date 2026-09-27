@@ -1,0 +1,91 @@
+spring:
+  application:
+    name: fraud-service
+
+  # Kafka: consumer del evento TransferConfirmed (topic transfer.events) y producer del evento
+  # TransferFlagged (topic fraud.events) — tarea 7.1, Requisito 7, criterios 1 y 2.
+  # Por defecto apunta al broker local de infra/docker-compose.yml (localhost:9092),
+  # con override por entorno para despliegues. El payload viaja como JSON (String) y el
+  # tipo/versión del evento como headers de Kafka (eventType / eventVersion).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      # Grupo de consumo del fraud-service: cada evento lo procesa una única instancia del servicio.
+      group-id: ${KAFKA_CONSUMER_GROUP_ID:fraud-service}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Al no haber offset comprometido, leer desde el inicio para no perder eventos previos.
+      auto-offset-reset: earliest
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Publicación confiable: confirmación de todas las réplicas + idempotencia del producer.
+      acks: all
+      properties:
+        enable.idempotence: true
+
+  # Internacionalización: mensajes en español (por defecto) e inglés.
+  messages:
+    basename: messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+  web:
+    locale: es
+    locale-resolver: accept-header
+
+server:
+  port: ${FRAUD_SERVICE_PORT:8085}
+
+# Reglas de fraude (tarea 7.1, Requisito 7, criterio 1). Umbrales realistas para banca chilena,
+# expresados en pesos chilenos (CLP, sin decimales: minor units = pesos enteros).
+fraud:
+  rules:
+    high-amount:
+      # Monto por transferencia individual por encima del cual se marca (comparación estricta).
+      # 5.000.000 CLP: monto elevado pero plausible entre personas; conviene revisión de riesgo.
+      threshold-clp: ${FRAUD_HIGH_AMOUNT_THRESHOLD_CLP:5000000}
+    velocity:
+      # Ventana deslizante por cuenta origen.
+      window: ${FRAUD_VELOCITY_WINDOW:1m}
+      # Se marca al superar este número de transferencias en la ventana (la 6.ª en 1 minuto).
+      max-transfers: ${FRAUD_VELOCITY_MAX_TRANSFERS:5}
+      # Se marca al superar este monto acumulado (CLP) en la ventana.
+      max-amount-clp: ${FRAUD_VELOCITY_MAX_AMOUNT_CLP:10000000}
+  events:
+    # Topic destino de los eventos TransferFlagged.
+    topic: ${FRAUD_EVENTS_TOPIC:fraud.events}
+    # Topic de origen de los eventos de transferencia; debe coincidir con outbox.relay.topic
+    # de transfer-service (por defecto transfer.events).
+    transfer-topic: ${TRANSFER_EVENTS_TOPIC:transfer.events}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Observabilidad (tarea 11.1, Requisito 11, criterio 1): se expone el endpoint
+        # /actuator/prometheus para que Prometheus scrapee las métricas de Micrometer.
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      # Etiqueta común aplicada a todas las métricas: permite filtrar/agrupar por servicio en los
+      # dashboards de Grafana (latencia, errores, throughput) — Requisito 11, criterio 2.
+      application: ${spring.application.name}
+    distribution:
+      # Habilita histogramas nativos de percentiles para la latencia de las peticiones HTTP server,
+      # de modo que Grafana pueda calcular p95/p99 con histogram_quantile sobre http_server_requests.
+      percentiles-histogram:
+        http.server.requests: true
+  # Observabilidad — trazas distribuidas OpenTelemetry → Jaeger (tarea 11.2, Requisito 11, criterio 3).
+  # Micrometer Tracing (puente OTel) instrumenta el consumer y el producer Kafka, continuando la traza
+  # propagada en los headers del evento de transferencia dentro de la misma traza distribuida.
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Exporter OTLP/HTTP hacia el receiver OTLP de Jaeger all-in-one (puerto 4318, path /v1/traces).
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}

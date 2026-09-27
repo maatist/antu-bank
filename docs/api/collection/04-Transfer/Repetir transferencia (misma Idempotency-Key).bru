@@ -1,0 +1,43 @@
+meta {
+  name: Repetir transferencia (misma Idempotency-Key)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{transferUrl}}/transfers
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept-Language: es
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "sourceAccountId": "{{accountId}}",
+    "destinationAccountId": "{{destinationAccountId}}",
+    "amountMinor": 50000
+  }
+}
+
+tests {
+  test("responde 200 (resultado reproducido)", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("id");
+  });
+}
+
+docs {
+  Reenvía la MISMA transferencia con la MISMA {{idempotencyKey}} generada por "Crear
+  transferencia". El servicio detecta la clave ya vista y retorna el mismo resultado SIN aplicar
+  un nuevo movimiento: responde 200 OK (no 201). Esto demuestra el Requisito 4 (idempotencia):
+  un reintento por red inestable nunca duplica el movimiento.
+}

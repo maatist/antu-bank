@@ -1,0 +1,14 @@
+# Datasource de Grafana aprovisionado automáticamente (tarea 11.1, Requisito 11, criterio 2).
+# Apunta al Prometheus del stack de infra por su nombre de servicio en la red de Compose.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # uid fijo: los dashboards aprovisionados referencian este datasource por uid (prometheus),
+    # de modo que resuelvan sin intervención al cargar desde archivo.
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

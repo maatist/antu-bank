@@ -1,0 +1,56 @@
+# Configuración de Loki para Antu Bank (tarea 11.3, Requisito 11, criterio 4).
+#
+# Despliegue monolítico (single binary) pensado para el entorno local de portafolio: sin
+# autenticación, almacenamiento en filesystem y retención acotada. Loki recibe los logs
+# estructurados (JSON) que cada microservicio Spring envía mediante el appender loki4j a
+# /loki/api/v1/push (ver logback-spring.xml). Los campos MDC traceId/spanId viajan como
+# structured metadata, lo que habilita la correlación logs ↔ trazas por trace-id desde Grafana
+# (datasource Loki con derivedField hacia Jaeger).
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # Silencia el ruido de logs internos de Loki en local.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+# Esquema TSDB v13, requerido para structured metadata (traceId/spanId de los logs).
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Habilita explícitamente la metadata estructurada (traceId/spanId) que envía loki4j.
+  allow_structured_metadata: true
+  # Retención de 7 días: suficiente para una demo de portafolio sin consumir disco indefinidamente.
+  retention_period: 168h
+  # Tolerancia amplia de timestamps para no rechazar logs por desfases de reloj en local.
+  reject_old_samples: false
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+# Desactiva el reporte de uso anónimo a Grafana Labs en local.
+analytics:
+  reporting_enabled: false

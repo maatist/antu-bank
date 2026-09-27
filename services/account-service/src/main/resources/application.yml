@@ -1,0 +1,82 @@
+spring:
+  application:
+    name: account-service
+
+  datasource:
+    url: ${ACCOUNT_DB_URL:jdbc:postgresql://localhost:5433/account}
+    username: ${ACCOUNT_DB_USER:account}
+    password: ${ACCOUNT_DB_PASSWORD:account}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  # Seguridad: resource server OAuth2/OIDC (tarea 8.2, Requisito 8, criterio 4).
+  # El servicio valida el JWT emitido por Keycloak contra el JWKS del realm antu-bank.
+  # issuer-uri apunta al realm; Spring descubre el jwk-set-uri por OIDC discovery y cachea las
+  # claves para validar la firma localmente (sin llamar a Keycloak por request). Configurable
+  # por entorno (KEYCLOAK_ISSUER_URI) para demo/prod; por defecto el Keycloak local (puerto 8081).
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/antu-bank}
+
+  # Internacionalización: mensajes en español (por defecto) e inglés.
+  messages:
+    basename: messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+  web:
+    locale: es
+    locale-resolver: accept-header
+
+server:
+  port: ${ACCOUNT_SERVICE_PORT:8082}
+
+# Documentación OpenAPI / Swagger UI
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Observabilidad (tarea 11.1, Requisito 11, criterio 1): se expone el endpoint
+        # /actuator/prometheus para que Prometheus scrapee las métricas de Micrometer.
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      # Etiqueta común aplicada a todas las métricas: permite filtrar/agrupar por servicio en los
+      # dashboards de Grafana (latencia, errores, throughput) — Requisito 11, criterio 2.
+      application: ${spring.application.name}
+    distribution:
+      # Habilita histogramas nativos de percentiles para la latencia de las peticiones HTTP server,
+      # de modo que Grafana pueda calcular p95/p99 con histogram_quantile sobre http_server_requests.
+      percentiles-histogram:
+        http.server.requests: true
+  # Observabilidad — trazas distribuidas OpenTelemetry → Jaeger (tarea 11.2, Requisito 11, criterio 3).
+  # Micrometer Tracing (puente OTel) instrumenta los endpoints HTTP y continúa la traza propagada por
+  # el gateway, correlacionando las llamadas a account-service dentro de la misma traza distribuida.
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Exporter OTLP/HTTP hacia el receiver OTLP de Jaeger all-in-one (puerto 4318, path /v1/traces).
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}

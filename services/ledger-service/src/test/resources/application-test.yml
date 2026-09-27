@@ -1,0 +1,17 @@
+# Perfil de test (tarea 8.2): mantiene la seguridad real en producción pero evita contactar a
+# Keycloak durante los tests de integración.
+#
+# - Se limpia issuer-uri (evita el OIDC discovery ansioso al arrancar, que fallaría sin Keycloak).
+# - Se fija un jwk-set-uri ficticio: crea un JwtDecoder perezoso (no descarga claves al iniciar).
+#
+# La cadena de seguridad activa en este perfil (SecurityConfig#testSecurityFilterChain) permite
+# todo el tráfico, por lo que el JwtDecoder ficticio nunca se invoca. Así los tests existentes,
+# que llaman a la API sin token, siguen en verde. Los tests de autorización 401/403 (tarea 8.5)
+# ejercitan la cadena de producción por separado.
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ""
+          jwk-set-uri: "http://localhost:0/realms/antu-bank/protocol/openid-connect/certs"

@@ -1,0 +1,49 @@
+meta {
+  name: Crear cuenta destino
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{accountUrl}}/accounts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept-Language: es
+}
+
+body:json {
+  {
+    "holderRut": "{{adminRut}}",
+    "holderName": "Sebastián Muñoz",
+    "accountType": "VISTA",
+    "bank": "BANCO_DE_CHILE",
+    "currency": "CLP"
+  }
+}
+
+script:post-response {
+  // Segunda cuenta usada como DESTINO en la transferencia. Guarda su id en {{destinationAccountId}}.
+  if (res.getBody() && res.getBody().id) {
+    bru.setEnvVar("destinationAccountId", res.getBody().id);
+  }
+}
+
+tests {
+  test("responde 201 con id de cuenta", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody()).to.have.property("id");
+  });
+}
+
+docs {
+  Crea una segunda cuenta (RUT 16.789.012-1) para usarla como cuenta destino de la
+  transferencia. Guarda su id en {{destinationAccountId}}.
+}

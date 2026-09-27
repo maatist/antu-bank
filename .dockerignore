@@ -1,0 +1,52 @@
+# .dockerignore raíz — mantiene liviano el contexto de build enviado al daemon Docker.
+# Los Dockerfile por servicio se construyen con el contexto en la raíz del monorepo (para
+# acceder a settings.gradle.kts, build-logic, el version catalog y common-domain), por lo que
+# aquí excluimos todo lo que no aporta a la compilación del bootJar dentro del contenedor.
+
+# --- Artefactos de build de Gradle (se recompilan dentro de la imagen) ---
+.gradle/
+build/
+build-logic/build/
+**/build/
+**/.gradle/
+
+# --- Frontend Next.js (no forma parte de las imágenes de los servicios backend) ---
+frontend/
+
+# --- Node (por si acaso hay dependencias en otros directorios) ---
+**/node_modules/
+**/.next/
+**/out/
+
+# --- Control de versiones e IDE ---
+.git/
+.gitignore
+.idea/
+.vscode/
+*.iml
+.settings/
+.project
+.classpath
+
+# --- Documentación, specs y metadatos que no afectan el build ---
+.kiro/
+**/*.md
+!gradle/wrapper/gradle-wrapper.jar
+
+# --- Infra local y despliegue (no se copian a la imagen del servicio) ---
+infra/
+
+# --- Logs, temporales y archivos de sistema ---
+*.log
+hs_err_pid*
+.DS_Store
+Thumbs.db
+
+# --- Secretos / entornos locales (nunca deben entrar al contexto) ---
+**/.env
+**/.env.*
+!**/.env.example
+
+# --- Los propios Dockerfile / dockerignore no necesitan copiarse ---
+**/Dockerfile
+**/.dockerignore

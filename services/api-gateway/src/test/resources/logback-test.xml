@@ -1,0 +1,14 @@
+<configuration>
+    <!-- Config de logging para tests (tarea 11.3): consola de texto simple, SIN appender de Loki.
+         Logback prioriza logback-test.xml sobre logback-spring.xml en el classpath de test, de modo
+         que los tests no intentan enviar logs a Loki (que no está levantado durante los tests). -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

@@ -1,0 +1,132 @@
+{{/*
+=============================================================================
+Keycloak (IdP OIDC) — Requisito 8.
+Deployment + Service (ClusterIP) del contenedor oficial de Keycloak. Los
+microservicios validan el JWT contra el JWKS del realm (issuer configurado en
+global.env.KEYCLOAK_ISSUER_URI). El acceso externo (para el login del frontend
+y el OIDC discovery) se resuelve por el Ingress del gateway o un Ingress propio.
+
+Se genera SOLO si keycloak.enabled = true.
+
+Manejo de secretos: la password del admin de Keycloak y las credenciales de su
+base de datos se toman de un Secret EXISTENTE (keycloak.existingSecret), nunca
+hardcodeadas. Para pruebas puede usarse keycloak.adminSecretEnv (placeholders).
+El realm-export.json se monta desde un ConfigMap externo (keycloak.realmConfigMap)
+para no versionar el realm dentro del chart.
+=============================================================================
+*/}}
+{{- if .Values.keycloak.enabled }}
+{{- $root := . -}}
+{{- $name := "keycloak" -}}
+{{- $fullname := include "antu-bank.service.fullname" (dict "root" $root "name" $name) -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "antu-bank.service.labels" (dict "root" $root "name" $name) | nindent 4 }}
+spec:
+  replicas: {{ .Values.keycloak.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "antu-bank.service.selectorLabels" (dict "root" $root "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "antu-bank.service.labels" (dict "root" $root "name" $name) | nindent 8 }}
+    spec:
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak
+          image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          args:
+            {{- toYaml .Values.keycloak.args | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.keycloak.port }}
+              protocol: TCP
+          env:
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_HTTP_PORT
+              value: {{ .Values.keycloak.port | quote }}
+            {{- with .Values.keycloak.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          envFrom:
+            {{- if .Values.keycloak.existingSecret }}
+            - secretRef:
+                name: {{ .Values.keycloak.existingSecret }}
+            {{- else if .Values.keycloak.adminSecretEnv }}
+            - secretRef:
+                name: {{ $fullname }}
+            {{- end }}
+          {{- if .Values.keycloak.realmConfigMap }}
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: {{ .Values.keycloak.managementPort }}
+            failureThreshold: 40
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: {{ .Values.keycloak.managementPort }}
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: {{ .Values.keycloak.managementPort }}
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+      {{- if .Values.keycloak.realmConfigMap }}
+      volumes:
+        - name: realm-import
+          configMap:
+            name: {{ .Values.keycloak.realmConfigMap }}
+      {{- end }}
+{{- if and (not .Values.keycloak.existingSecret) .Values.keycloak.adminSecretEnv }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "antu-bank.service.labels" (dict "root" $root "name" $name) | nindent 4 }}
+type: Opaque
+stringData:
+  {{- range $k, $v := .Values.keycloak.adminSecretEnv }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "antu-bank.service.labels" (dict "root" $root "name" $name) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "antu-bank.service.selectorLabels" (dict "root" $root "name" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

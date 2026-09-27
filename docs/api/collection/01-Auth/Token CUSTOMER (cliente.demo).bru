@@ -1,0 +1,42 @@
+meta {
+  name: Token CUSTOMER (cliente.demo)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{keycloakUrl}}/realms/{{realm}}/protocol/openid-connect/token
+  body: formUrlEncoded
+  auth: none
+}
+
+headers {
+  Content-Type: application/x-www-form-urlencoded
+}
+
+body:form-urlencoded {
+  grant_type: password
+  client_id: {{authClientId}}
+  username: {{customerUser}}
+  password: {{customerPass}}
+}
+
+script:post-response {
+  // Guarda el access_token del usuario CUSTOMER en la variable de entorno {{token}}.
+  // El resto de las peticiones de cliente (crear cuenta, transferir, GraphQL) lo usan.
+  if (res.getStatus() === 200 && res.getBody() && res.getBody().access_token) {
+    bru.setEnvVar("token", res.getBody().access_token);
+  }
+}
+
+tests {
+  test("responde 200 con access_token", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("access_token");
+  });
+}
+
+docs {
+  Obtiene un token de USUARIO (roles CUSTOMER) por Direct Access Grant contra el client de
+  pruebas `antu-bank-postman`. Ejecuta esta petición primero: guarda el token en {{token}}.
+}

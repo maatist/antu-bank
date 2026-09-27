@@ -1,0 +1,103 @@
+{
+  "Comun": {
+    "marca": "Antu Bank",
+    "cerrarSesion": "Sign out"
+  },
+  "SelectorIdioma": {
+    "etiqueta": "Language",
+    "es": "Español",
+    "en": "English"
+  },
+  "Portada": {
+    "subtitulo": "Chilean digital banking",
+    "saludo": "Hello, {nombre}. You are signed in.",
+    "clientePorDefecto": "customer",
+    "irAlPanel": "Go to dashboard",
+    "invitacion": "Sign in to see your products and transfer money.",
+    "iniciarSesion": "Sign in",
+    "entrarComoInvitado": "Enter as guest (demo)",
+    "heroDescripcion": "A reference Chilean core banking platform: event-driven microservices, double-entry ledger and a GraphQL BFF. A portfolio project built to be explored in minutes.",
+    "highlightsTitulo": "What the project shows",
+    "highlightLedger": "Immutable double-entry ledger (balances always reconcile).",
+    "highlightIdempotencia": "Idempotent transfers (a retry never duplicates the movement).",
+    "highlightEventos": "Event-driven architecture: Kafka + Outbox pattern + Saga with compensation.",
+    "highlightSeguridad": "OIDC authentication with Keycloak (Authorization Code + PKCE) and roles.",
+    "highlightGraphql": "API Gateway with a GraphQL BFF aggregating accounts, balances and history.",
+    "highlightObservabilidad": "Observability (metrics, traces, logs) and infrastructure as code.",
+    "tourNota": "Once you're in, a guided tour walks you through the dashboard (accounts, transfer and history).",
+    "demoTitulo": "Are you a recruiter? Get in without signing up",
+    "demoDescripcion": "The «Enter as guest» button opens Keycloak with the username already filled in; just confirm with the demo password. Once inside you'll get a guided tour of the dashboard.",
+    "demoUsuario": "Username",
+    "demoClave": "Password",
+    "demoRolCliente": "Customer (CUSTOMER)",
+    "demoRolAdmin": "Administrator (ADMIN)",
+    "demoSoloDemo": "Credentials for the public demo only.",
+    "enlacesTitulo": "Explore the API and the code",
+    "enlaceRepositorio": "Code on GitHub",
+    "enlaceSwagger": "Swagger / OpenAPI",
+    "enlaceGraphiql": "GraphQL playground"
+  },
+  "Tour": {
+    "reabrir": "Guided tour",
+    "progreso": "Step {actual} of {total}",
+    "omitir": "Skip",
+    "anterior": "Back",
+    "siguiente": "Next",
+    "finalizar": "Finish",
+    "cuentas": {
+      "titulo": "Your accounts and balances",
+      "cuerpo": "Here you see your accounts and the balance of each one, formatted in Chilean pesos (es-CL)."
+    },
+    "transferir": {
+      "titulo": "Start a transfer",
+      "cuerpo": "Pick the source account, enter the destination account and the amount. You'll see the process status live."
+    },
+    "historial": {
+      "titulo": "Check the history",
+      "cuerpo": "Each transfer shows up here as sent or received, with its status. It refreshes after you transfer."
+    }
+  },
+  "Panel": {
+    "titulo": "Dashboard",
+    "clientePorDefecto": "customer",
+    "errorTitulo": "We couldn't load your data.",
+    "errorSinRut": "We couldn't determine your RUT to look up your products. Set DEMO_RUT or map the 'rut' claim in Keycloak.",
+    "errorBffGenerico": "An error occurred while querying the BFF.",
+    "tituloCuentas": "Accounts and balances",
+    "tituloTransferir": "Start a transfer",
+    "tituloHistorial": "Transfer history",
+    "sinCuentasParaTransferir": "You need at least one source account to transfer.",
+    "cuentaGenerica": "Account",
+    "sinCuentas": "You have no registered accounts.",
+    "sinMovimientos": "You have no movements yet.",
+    "colFecha": "Date",
+    "colMovimiento": "Movement",
+    "colEstado": "Status",
+    "colMonto": "Amount",
+    "movimientoEnviada": "Sent",
+    "movimientoRecibida": "Received",
+    "montoVacio": "—"
+  },
+  "FormularioTransferencia": {
+    "titulo": "Start a transfer",
+    "cuentaOrigen": "Source account",
+    "seleccionaCuenta": "Select an account",
+    "cuentaGenerica": "Account",
+    "cuentaDestino": "Destination account (id)",
+    "cuentaDestinoPlaceholder": "Destination account identifier",
+    "monto": "Amount (CLP)",
+    "montoPlaceholder": "e.g. 25000",
+    "transferir": "Transfer",
+    "procesando": "Processing…",
+    "enviando": "Sending the transfer…",
+    "exito": "✓ {mensaje} Status: {estado} · id {id}…",
+    "error": "✕ {mensaje}{detalle}"
+  },
+  "Transferencia": {
+    "sesionExpirada": "Your session expired. Sign in again to transfer.",
+    "seleccionaCuentas": "Select the source and destination accounts.",
+    "cuentasDistintas": "The source and destination accounts must be different.",
+    "montoInvalido": "Enter a valid amount in pesos (positive integer).",
+    "procesada": "The transfer was processed."
+  }
+}

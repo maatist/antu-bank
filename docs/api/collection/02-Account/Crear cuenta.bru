@@ -1,0 +1,52 @@
+meta {
+  name: Crear cuenta
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{accountUrl}}/accounts
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept-Language: es
+}
+
+body:json {
+  {
+    "holderRut": "{{customerRut}}",
+    "holderName": "Javiera González",
+    "accountType": "CORRIENTE",
+    "bank": "BANCO_ESTADO",
+    "currency": "CLP"
+  }
+}
+
+script:post-response {
+  // Encadena el id de la cuenta creada para las siguientes peticiones (consultar, saldo, transferir).
+  if (res.getBody() && res.getBody().id) {
+    bru.setEnvVar("accountId", res.getBody().id);
+  }
+}
+
+tests {
+  test("responde 201 con id de cuenta", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody()).to.have.property("id");
+  });
+}
+
+docs {
+  Crea una cuenta para el titular `cliente.demo` (RUT 12.345.678-5). `POST /accounts` exige el
+  rol CUSTOMER, así que usa {{token}}. Guarda el id de la cuenta en {{accountId}}.
+
+  Valores válidos: accountType ∈ {CORRIENTE, VISTA, AHORRO}; bank ∈ ChileanBank
+  (BANCO_ESTADO, BANCO_DE_CHILE, BCI, SANTANDER_CHILE, ...); currency ∈ {CLP, USD, UF}.
+}

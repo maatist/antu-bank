@@ -1,0 +1,30 @@
+meta {
+  name: Consultar cuenta por id
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{accountUrl}}/accounts/{{accountId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept-Language: es
+}
+
+tests {
+  test("responde 200 con la cuenta creada", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("id");
+  });
+}
+
+docs {
+  Consulta la cuenta creada por su identificador ({{accountId}}). Solo requiere autenticación.
+}

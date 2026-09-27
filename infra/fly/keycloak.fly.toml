@@ -1,0 +1,46 @@
+# =============================================================================
+# Fly.io — Keycloak (IdP OIDC) (tarea 12a.3, Requisito 12, criterio 1).
+# =============================================================================
+# App PÚBLICA (HTTPS por Fly) que sirve el realm versionado antu-bank. El frontend (Vercel) y
+# los servicios validan el JWT contra su issuer HTTPS público, p. ej.:
+#   https://antu-bank-keycloak.fly.dev/realms/antu-bank
+#
+# El realm-export.json vive en infra/keycloak. Para importarlo hay dos variantes (ver
+# infra/README-deploy.md): (a) imagen propia que copie el realm y arranque con --import-realm,
+# o (b) un volumen de Fly con el realm montado. Aquí se usa la imagen oficial + comando de import.
+#
+# Secreto admin (KC_BOOTSTRAP_ADMIN_PASSWORD) NUNCA en el repo: `fly secrets set`.
+
+app = "antu-bank-keycloak"
+primary_region = "scl"
+
+[build]
+  image = "quay.io/keycloak/keycloak:26.0"
+
+# Arranque productivo detrás del proxy TLS de Fly (proxy-headers + hostname no estricto).
+[processes]
+  app = "start --import-realm --hostname-strict=false --http-enabled=true --proxy-headers=xforwarded"
+
+[env]
+  KC_HTTP_PORT = "8080"
+  KC_HEALTH_ENABLED = "true"
+  KC_BOOTSTRAP_ADMIN_USERNAME = "admin"
+  # KC_BOOTSTRAP_ADMIN_PASSWORD se inyecta con `fly secrets set`.
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1   # always-on: el IdP debe estar disponible 24/7.
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "40s"
+    method = "GET"
+    path = "/realms/antu-bank"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

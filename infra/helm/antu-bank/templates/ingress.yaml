@@ -1,0 +1,51 @@
+{{/*
+=============================================================================
+Ingress del api-gateway — ÚNICA entrada pública del stack (Requisito 9, criterio 1).
+El resto de microservicios son ClusterIP (internos). En EKS este Ingress suele
+resolverse con el AWS Load Balancer Controller (clase "alb") o un ingress-nginx.
+
+Se genera SOLO si ingress.enabled = true y el servicio destino existe y está habilitado.
+El servicio destino por defecto es "api-gateway" en su puerto 8080.
+=============================================================================
+*/}}
+{{- if .Values.ingress.enabled }}
+{{- $root := . -}}
+{{- $svcName := .Values.ingress.service -}}
+{{- $svc := get .Values.services $svcName -}}
+{{- if and $svc $svc.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "antu-bank.service.fullname" (dict "root" $root "name" $svcName) }}
+  labels:
+    {{- include "antu-bank.service.labels" (dict "root" $root "name" $svcName) | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ default "Prefix" .pathType }}
+            backend:
+              service:
+                name: {{ include "antu-bank.service.fullname" (dict "root" $root "name" $svcName) }}
+                port:
+                  number: {{ $svc.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

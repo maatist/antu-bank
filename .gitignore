@@ -1,0 +1,49 @@
+# Gradle
+.gradle/
+build/
+build-logic/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# Java
+*.class
+*.log
+hs_err_pid*
+
+# Node / Next.js (frontend)
+node_modules/
+.next/
+out/
+.env*.local
+
+# Entornos con secretos (demo/infra) — se versiona solo la plantilla *.example
+.env
+.env.*
+!.env*.example
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Terraform (infra/terraform) — estado y vars locales fuera del repo
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# tfvars con valores reales: se versiona solo la plantilla *.example.tfvars
+*.tfvars
+*.tfvars.json
+!*.example.tfvars

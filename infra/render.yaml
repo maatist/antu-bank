@@ -1,0 +1,248 @@
+# =============================================================================
+# Render Blueprint (Infra as Code) — despliegue público del backend (tarea 12a.3,
+# Requisito 12, criterio 1): backend en un PaaS de contenedores gratuito/barato,
+# accesible 24/7 vía HTTPS.
+# =============================================================================
+# Este Blueprint despliega el stack REDUCIDO del perfil "demo" (tarea 12a.2) en Render:
+#
+#   - UN solo PostgreSQL gestionado (aislamiento por SCHEMA por servicio; ver
+#     infra/postgres/demo-init.sql y los application-demo.yml). NO hay base por servicio.
+#   - Kafka GESTIONADO GRATUITO externo (Upstash/Redpanda) referenciado por variables de
+#     entorno (KAFKA_*). Render no ofrece Kafka gestionado; se inyecta por el env group.
+#   - Keycloak como IdP (contenedor propio) importando el realm versionado antu-bank.
+#   - Los 6 microservicios construidos desde sus Dockerfile por servicio con
+#     SPRING_PROFILES_ACTIVE=demo.
+#   - SOLO api-gateway es público (HTTPS terminado por Render en el borde). El resto son
+#     servicios privados (Private Services) alcanzables por su nombre en la red interna.
+#
+# Cómo usarlo (detalle en infra/README-deploy.md):
+#   1) Crear un "Blueprint" en Render apuntando a este repositorio y a este archivo.
+#   2) Completar el env group "antu-bank-demo-secrets" con los secretos reales (Postgres se
+#      cablea solo desde la base gestionada; Kafka y Keycloak admin se cargan a mano).
+#   3) Render construye las imágenes con los Dockerfile y expone api-gateway por HTTPS.
+#
+# Manejo de secretos: NINGÚN secreto se hardcodea. Los valores sensibles viven en el env group
+# "antu-bank-demo-secrets" (sync:false => se cargan en el panel de Render, no en el repo) o se
+# cablean desde recursos gestionados (fromDatabase / generateValue).
+# El contexto de build de los Dockerfile es la RAÍZ del monorepo (dockerContext: .).
+
+# -----------------------------------------------------------------------------
+# Env group compartido: secretos y config comunes a todos los servicios.
+# sync:false => Render pide el valor en el panel y NO lo guarda en el repo.
+# -----------------------------------------------------------------------------
+envVarGroups:
+  - name: antu-bank-demo-secrets
+    envVars:
+      # --- Kafka gestionado gratuito (Upstash/Redpanda) ---
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        sync: false
+      - key: KAFKA_SECURITY_PROTOCOL
+        value: SASL_SSL
+      - key: KAFKA_SASL_MECHANISM
+        value: SCRAM-SHA-256
+      - key: KAFKA_SASL_JAAS_CONFIG
+        sync: false
+      # --- Keycloak: URL pública del issuer (se completa con la URL HTTPS del servicio
+      #     keycloak una vez creado, p. ej. https://antu-bank-keycloak.onrender.com/realms/antu-bank) ---
+      - key: KEYCLOAK_ISSUER_URI
+        sync: false
+
+databases:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL gestionado (plan free). Base única "neobank"; los schemas
+  # account/ledger/transfer los crea Flyway (create-schemas) por servicio.
+  # ---------------------------------------------------------------------------
+  - name: antu-bank-demo-postgres
+    databaseName: neobank
+    user: neobank
+    plan: free
+
+services:
+  # ---------------------------------------------------------------------------
+  # Keycloak (OIDC): contenedor propio que importa el realm versionado antu-bank.
+  # Público para que el frontend (Vercel) y los servicios validen el JWT vía HTTPS.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: antu-bank-keycloak
+    runtime: image
+    plan: free
+    region: oregon
+    image:
+      url: quay.io/keycloak/keycloak:26.0
+    dockerCommand: start --import-realm --hostname-strict=false --http-enabled=true --proxy-headers=xforwarded
+    healthCheckPath: /realms/antu-bank
+    envVars:
+      - key: KC_BOOTSTRAP_ADMIN_USERNAME
+        value: admin
+      - key: KC_BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+      - key: KC_HEALTH_ENABLED
+        value: "true"
+      - key: KC_HTTP_PORT
+        value: "8080"
+      - key: PORT
+        value: "8080"
+    # El realm se importa desde infra/keycloak (montado en la imagen oficial mediante
+    # un disco o build propio). Ver infra/README-deploy.md para la variante recomendada.
+
+  # ---------------------------------------------------------------------------
+  # account-service (privado). Datasource al PostgreSQL gestionado, schema "account".
+  # ---------------------------------------------------------------------------
+  - type: pserv
+    name: antu-bank-account
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: services/account-service/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+      - key: SERVER_PORT
+        value: "8082"
+      - key: DEMO_DB_URL
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: connectionString
+      - key: DEMO_DB_USER
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: user
+      - key: DEMO_DB_PASSWORD
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: password
+      - fromGroup: antu-bank-demo-secrets
+
+  # ---------------------------------------------------------------------------
+  # ledger-service (privado). Postgres schema "ledger" + Kafka gestionado (consumer).
+  # ---------------------------------------------------------------------------
+  - type: pserv
+    name: antu-bank-ledger
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: services/ledger-service/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+      - key: SERVER_PORT
+        value: "8083"
+      - key: DEMO_DB_URL
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: connectionString
+      - key: DEMO_DB_USER
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: user
+      - key: DEMO_DB_PASSWORD
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: password
+      - fromGroup: antu-bank-demo-secrets
+
+  # ---------------------------------------------------------------------------
+  # transfer-service (privado). Postgres schema "transfer" + Kafka (outbox producer)
+  # + invocación directa al ledger por su hostname interno de Render.
+  # ---------------------------------------------------------------------------
+  - type: pserv
+    name: antu-bank-transfer
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: services/transfer-service/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+      - key: SERVER_PORT
+        value: "8084"
+      - key: DEMO_DB_URL
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: connectionString
+      - key: DEMO_DB_USER
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: user
+      - key: DEMO_DB_PASSWORD
+        fromDatabase:
+          name: antu-bank-demo-postgres
+          property: password
+      # Hostname interno del ledger dentro de la red privada de Render.
+      - key: LEDGER_BASE_URL
+        fromService:
+          type: pserv
+          name: antu-bank-ledger
+          property: hostport
+      - fromGroup: antu-bank-demo-secrets
+
+  # ---------------------------------------------------------------------------
+  # fraud-service (privado). Solo Kafka (consumer de eventos de transferencia).
+  # ---------------------------------------------------------------------------
+  - type: pserv
+    name: antu-bank-fraud
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: services/fraud-service/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+      - key: SERVER_PORT
+        value: "8085"
+      - fromGroup: antu-bank-demo-secrets
+
+  # ---------------------------------------------------------------------------
+  # notification-service (privado). Solo Kafka (consumer de eventos notificables).
+  # ---------------------------------------------------------------------------
+  - type: pserv
+    name: antu-bank-notification
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: services/notification-service/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+      - key: SERVER_PORT
+        value: "8086"
+      - fromGroup: antu-bank-demo-secrets
+
+  # ---------------------------------------------------------------------------
+  # api-gateway: ÚNICO servicio público (borde HTTPS). Enruta a los servicios
+  # privados por su hostname interno de Render y agrega el BFF GraphQL.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: antu-bank-gateway
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: services/api-gateway/Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: demo
+      - key: SERVER_PORT
+        value: "8080"
+      - key: ACCOUNT_SERVICE_URI
+        fromService:
+          type: pserv
+          name: antu-bank-account
+          property: hostport
+      - key: LEDGER_SERVICE_URI
+        fromService:
+          type: pserv
+          name: antu-bank-ledger
+          property: hostport
+      - key: TRANSFER_SERVICE_URI
+        fromService:
+          type: pserv
+          name: antu-bank-transfer
+          property: hostport
+      - fromGroup: antu-bank-demo-secrets

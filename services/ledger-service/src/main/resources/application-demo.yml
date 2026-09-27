@@ -1,0 +1,37 @@
+# =============================================================================
+# Perfil "demo" — ledger-service (tarea 12a.2, Requisito 12, criterios 2 y 7).
+# =============================================================================
+# Se activa SOLO en el despliegue público reducido (SPRING_PROFILES_ACTIVE=demo). NO altera el
+# perfil por defecto (local), que conserva database-per-service estricto (Requisito 12, criterio 7).
+#
+# Configuración reducida (Requisito 12, criterio 2):
+#   - Un ÚNICO PostgreSQL compartido, aislado por SCHEMA. ledger-service usa el schema "ledger".
+#   - Kafka gestionado gratuito (Upstash/Redpanda) vía SASL_SSL para consumir TransferConfirmed.
+#
+# Todos los secretos se parametrizan por variables de entorno (sin credenciales hardcodeadas).
+spring:
+  datasource:
+    url: ${LEDGER_DB_URL:${DEMO_DB_URL:jdbc:postgresql://postgres:5432/neobank}?currentSchema=ledger}
+    username: ${DEMO_DB_USER:neobank}
+    password: ${DEMO_DB_PASSWORD:neobank}
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    # Migraciones confinadas al schema "ledger" (incluye su propio flyway_schema_history).
+    schemas: ledger
+    default-schema: ledger
+    create-schemas: true
+
+  # Kafka gestionado gratuito (Upstash/Redpanda). Se conecta por SASL_SSL con credenciales por
+  # entorno; el broker y las credenciales NO se hardcodean. Ver infra/README-demo.md.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    # SASL_SSL: el proveedor gestionado expone TLS + autenticación SASL (SCRAM-SHA-256 en
+    # Upstash/Redpanda). El mecanismo es configurable por si el proveedor usa otro.
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    properties:
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-256}
+      # jaas config con usuario/clave del proveedor, inyectados por entorno (nunca en el repo).
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG}

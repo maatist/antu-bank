@@ -1,0 +1,230 @@
+# Infraestructura local de Antu Bank (perfil "local" = stack completo y fiel).
+# Database-per-service estricto: una base PostgreSQL por servicio.
+# Incluye Kafka (KRaft, sin Zookeeper) y Keycloak como IdP.
+#
+# Uso:
+#   docker compose -f infra/docker-compose.yml up -d
+#
+# Nota: en el perfil "demo" (público) esta topología se reduce a un solo PostgreSQL
+# con schemas y Kafka gestionado gratuito. Ver design.md, sección 9.
+
+name: antu-bank
+
+services:
+  # ---------------------------------------------------------------------------
+  # Bases de datos: una por servicio (database-per-service)
+  # ---------------------------------------------------------------------------
+  postgres-account:
+    image: postgres:16-alpine
+    container_name: antu-postgres-account
+    environment:
+      POSTGRES_DB: account
+      POSTGRES_USER: account
+      POSTGRES_PASSWORD: account
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg-account:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U account"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-ledger:
+    image: postgres:16-alpine
+    container_name: antu-postgres-ledger
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger
+    ports:
+      - "5434:5432"
+    volumes:
+      - pg-ledger:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-transfer:
+    image: postgres:16-alpine
+    container_name: antu-postgres-transfer
+    environment:
+      POSTGRES_DB: transfer
+      POSTGRES_USER: transfer
+      POSTGRES_PASSWORD: transfer
+    ports:
+      - "5435:5432"
+    volumes:
+      - pg-transfer:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transfer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Mensajería: Kafka (imagen oficial de Apache) en modo KRaft (sin Zookeeper)
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: antu-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "controller,broker"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Observabilidad — métricas (tarea 11.1, Requisito 11, criterios 1 y 2)
+  # ---------------------------------------------------------------------------
+  # Prometheus scrapea el endpoint /actuator/prometheus de cada microservicio. En este perfil
+  # "local" los servicios Spring corren en el host (fuera de Compose), por lo que Prometheus los
+  # alcanza vía host.docker.internal. El mapeo extra_hosts hace que ese nombre resuelva a la IP
+  # del host también en Linux (en Docker Desktop ya viene resuelto). Los targets y el intervalo de
+  # scrape se definen en ./prometheus/prometheus.yml.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: antu-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Observabilidad — logs estructurados (tarea 11.3, Requisito 11, criterio 4)
+  # ---------------------------------------------------------------------------
+  # Loki agrega los logs estructurados (JSON) de los microservicios. A diferencia de un despliegue
+  # con Promtail que raspa logs de contenedores, aquí cada servicio Spring ENVÍA sus logs
+  # directamente a la API push de Loki mediante el appender loki4j (ver logback-spring.xml de cada
+  # servicio). Esto es coherente con el resto de la observabilidad de este perfil "local": los
+  # servicios corren en el HOST (fuera de Compose), igual que exponen métricas a Prometheus y
+  # exportan trazas OTLP a Jaeger. Los servicios usan por defecto LOKI_URL=http://localhost:3100.
+  #
+  # Puertos:
+  #   3100 -> API HTTP de Loki (push de logs en /loki/api/v1/push y query en /loki/api/v1/query_range)
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: antu-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Grafana con datasources Prometheus + Loki y dashboards aprovisionados (latencia, errores,
+  # throughput) desde ./grafana/provisioning. Login por defecto admin/admin (solo entorno local).
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: antu-grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Permite ver los dashboards sin autenticarse (cómodo para demo local de portafolio).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Observabilidad — trazas distribuidas (tarea 11.2, Requisito 11, criterio 3)
+  # ---------------------------------------------------------------------------
+  # Jaeger all-in-one (agent + collector + query + UI en un contenedor) con el receiver OTLP
+  # habilitado (COLLECTOR_OTLP_ENABLED=true). Cada microservicio Spring exporta sus spans vía
+  # OpenTelemetry (puente Micrometer Tracing → OTel) por OTLP/HTTP al puerto 4318, de modo que la
+  # traza cruza gateway → transfer → ledger y se visualiza correlacionada en la UI de Jaeger.
+  # En el perfil "local" los servicios Spring corren en el host (fuera de Compose) y apuntan a
+  # localhost:4318, que aquí se publica hacia el host.
+  #
+  # Puertos:
+  #   16686 -> UI de Jaeger (búsqueda y visualización de trazas)
+  #    4318 -> receiver OTLP/HTTP  (endpoint por defecto de los servicios: /v1/traces)
+  #    4317 -> receiver OTLP/gRPC  (alternativa gRPC)
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: antu-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # UI de Jaeger
+      - "4318:4318"     # OTLP/HTTP (traces)
+      - "4317:4317"     # OTLP/gRPC (traces)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:16686/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Identity Provider: Keycloak (OIDC). Importa el realm versionado al arrancar.
+  # ---------------------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: antu-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+
+volumes:
+  pg-account:
+  pg-ledger:
+  pg-transfer:
+  kafka-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Configuración de logging de Antu Bank — logs estructurados (JSON) + envío a Loki
+  (tarea 11.3, Requisito 11, criterio 4).
+
+  Objetivo: emitir logs estructurados agregables por Loki y correlacionables con las trazas
+  distribuidas (Jaeger) por trace-id. Micrometer Tracing (tarea 11.2) ya popula en el MDC los
+  campos `traceId` y `spanId` en cada request/consumo instrumentado; aquí solo nos aseguramos de
+  que viajen tanto a la consola como a Loki (la JsonLayout de loki4j incluye el MDC por defecto).
+
+  Estrategia de shipping — appender loki4j (push directo desde el servicio), NO Promtail:
+  en el perfil "local" los microservicios Spring corren en el HOST (fuera de Compose), igual que
+  ocurre con las métricas (Prometheus scrapea host.docker.internal) y las trazas (los servicios
+  exportan OTLP a localhost:4318). Un Promtail que raspe logs de contenedores Docker no vería esos
+  procesos. El appender loki4j envía cada evento directamente a la API push de Loki, desacoplando
+  el logging de dónde corra el servicio (host o contenedor) y manteniendo la coherencia con el
+  resto de la observabilidad.
+
+  Se usa `logback-spring.xml` (no `logback.xml`) para poder usar <springProfile> y <springProperty>.
+
+  Appenders:
+    - CONSOLE      : texto legible para desarrollo (patrón por defecto de Spring Boot, que ya
+                     incluye [traceId,spanId] cuando hay tracing en el classpath).
+    - CONSOLE_JSON : una línea JSON por evento en stdout (JsonLayout de loki4j) — útil cuando el
+                     stdout del contenedor es recolectado (perfil demo/Kubernetes). Activo solo con
+                     el perfil "json".
+    - LOKI         : envía el log en JSON a Loki; los campos del MDC (traceId, spanId) viajan como
+                     metadata estructurada, habilitando la correlación logs ↔ trazas por trace-id.
+                     Activo en cualquier perfil excepto "test".
+
+  Configurables por entorno:
+    LOKI_URL   (por defecto http://localhost:3100/loki/api/v1/push)
+    LOG_LEVEL  (por defecto INFO)
+-->
+<configuration>
+    <!-- Base de Spring Boot: define CONSOLE_LOG_PATTERN (incluye traceId/spanId), colores, etc. -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- Nombre de la aplicación desde spring.application.name: se usa como label de stream en Loki. -->
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="antu-service"/>
+
+    <property name="LOKI_URL" value="${LOKI_URL:-http://localhost:3100/loki/api/v1/push}"/>
+    <property name="LOG_LEVEL" value="${LOG_LEVEL:-INFO}"/>
+
+    <!-- Consola de texto para desarrollo. El patrón por defecto de Spring Boot ya imprime
+         [traceId,spanId] cuando Micrometer Tracing está presente. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- JSON a stdout: la JsonLayout de loki4j (que incluye el MDC, es decir traceId/spanId) se
+         envuelve en un LayoutWrappingEncoder para poder usarla en un ConsoleAppender estándar. -->
+    <appender name="CONSOLE_JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <layout class="com.github.loki4j.logback.JsonLayout"/>
+        </encoder>
+    </appender>
+
+    <!-- Loki: envía cada evento en JSON. Los campos del MDC (traceId, spanId) los incluye la
+         JsonLayout por defecto, lo que permite correlacionar logs ↔ trazas por trace-id. Se
+         etiqueta el stream con app=<servicio> y host=<hostname>. -->
+    <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender">
+        <labels>
+            app = ${appName}
+            host = ${HOSTNAME}
+        </labels>
+        <message class="com.github.loki4j.logback.JsonLayout"/>
+        <http>
+            <url>${LOKI_URL}</url>
+        </http>
+    </appender>
+
+    <!-- En tests: solo consola de texto, sin intentar contactar a Loki. -->
+    <springProfile name="test">
+        <root level="${LOG_LEVEL}">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- Fuera de tests: consola (texto o JSON según el perfil "json") + envío a Loki. -->
+    <springProfile name="!test">
+        <springProfile name="json">
+            <root level="${LOG_LEVEL}">
+                <appender-ref ref="CONSOLE_JSON"/>
+                <appender-ref ref="LOKI"/>
+            </root>
+        </springProfile>
+        <springProfile name="!json">
+            <root level="${LOG_LEVEL}">
+                <appender-ref ref="CONSOLE"/>
+                <appender-ref ref="LOKI"/>
+            </root>
+        </springProfile>
+    </springProfile>
+</configuration>

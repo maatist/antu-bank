@@ -1,0 +1,75 @@
+meta {
+  name: me (cuentas, saldos, historial)
+  type: graphql
+  seq: 1
+}
+
+post {
+  url: {{gatewayUrl}}/graphql
+  body: graphql
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept-Language: es
+}
+
+body:graphql {
+  query Me($rut: String) {
+    me(rut: $rut) {
+      rut
+      accounts {
+        id
+        holderName
+        accountType
+        bank
+        bankName
+        currency
+        status
+        balance {
+          amountMinor
+          amount
+          currency
+        }
+      }
+      transfers {
+        id
+        status
+        sourceAccountId
+        destinationAccountId
+        amountMinor
+        currency
+        createdAt
+      }
+    }
+  }
+}
+
+body:graphql:vars {
+  {
+    "rut": "{{customerRut}}"
+  }
+}
+
+tests {
+  test("responde 200 con data.me", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("data");
+  });
+}
+
+docs {
+  Query del BFF GraphQL en el gateway (`POST /graphql`) que agrega en una sola respuesta las
+  cuentas del titular (account-service), su saldo derivado (ledger-service) y el historial de
+  transferencias (transfer-service). Requiere `Authorization: Bearer`; el gateway propaga el
+  token a los servicios internos.
+
+  Los tokens demo de Keycloak NO exponen el atributo `rut` como claim del JWT, por eso `me`
+  acepta el argumento `rut` (aquí {{customerRut}}). El playground interactivo GraphiQL está en
+  {{gatewayUrl}}/graphiql.
+}

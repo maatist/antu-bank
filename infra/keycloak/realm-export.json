@@ -1,0 +1,199 @@
+{
+  "realm": "antu-bank",
+  "enabled": true,
+  "displayName": "Antu Bank",
+  "loginTheme": "keycloak",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["es", "en"],
+  "defaultLocale": "es",
+  "sslRequired": "external",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "roles": {
+    "realm": [
+      { "name": "CUSTOMER", "description": "Cliente del banco" },
+      { "name": "ADMIN", "description": "Administrador del banco" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "antu-bank-frontend",
+      "name": "Antu Bank Frontend (Next.js)",
+      "description": "Client público del frontend. Flujo Authorization Code + PKCE (S256).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:8081/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "+"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
+    },
+    {
+      "clientId": "antu-bank-postman",
+      "name": "Antu Bank — Colección de pruebas (Postman/Bruno)",
+      "description": "Client público SOLO para probar la API desde Postman/Bruno vía Direct Access Grant (Resource Owner Password). Emite tokens de USUARIO (con roles CUSTOMER/ADMIN) para las colecciones de docs/api. No usar en producción.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
+    },
+    {
+      "clientId": "api-gateway",
+      "name": "Antu Bank API Gateway",
+      "description": "Client confidential del gateway (resource server y client-credentials para propagación/servicio a servicio).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "gateway-demo-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
+    },
+    {
+      "clientId": "account-service",
+      "name": "Antu Bank Account Service",
+      "description": "Client confidential del account-service (resource server; client-credentials para llamadas internas).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "account-service-demo-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
+    },
+    {
+      "clientId": "ledger-service",
+      "name": "Antu Bank Ledger Service",
+      "description": "Client confidential del ledger-service (resource server; client-credentials para llamadas internas).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "ledger-service-demo-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
+    },
+    {
+      "clientId": "transfer-service",
+      "name": "Antu Bank Transfer Service",
+      "description": "Client confidential del transfer-service (resource server; client-credentials para llamadas internas al ledger).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "transfer-service-demo-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "cliente.demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Javiera",
+      "lastName": "González",
+      "email": "javiera.gonzalez@demo.antubank.cl",
+      "attributes": {
+        "rut": ["12.345.678-5"]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo1234",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["CUSTOMER"]
+    },
+    {
+      "username": "admin.demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sebastián",
+      "lastName": "Muñoz",
+      "email": "sebastian.munoz@demo.antubank.cl",
+      "attributes": {
+        "rut": ["16.789.012-1"]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo1234",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["ADMIN", "CUSTOMER"]
+    }
+  ]
+}

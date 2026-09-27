@@ -1,0 +1,244 @@
+# =============================================================================
+# values.yaml — configuración por defecto del chart antu-bank.
+# =============================================================================
+# Estos defaults describen el STACK COMPLETO Y FIEL (Requisito 12, criterio 7):
+# los 6 microservicios + Keycloak, database-per-service ESTRICTO (una RDS por
+# servicio) y Kafka gestionado (MSK) vía SASL. NO se usa el perfil "demo" reducido.
+#
+# NINGÚN secreto se define aquí. Las credenciales (passwords de RDS, JAAS de MSK,
+# admin de Keycloak) se referencian desde Secrets EXISTENTES del clúster
+# (services.<svc>.existingSecret / keycloak.existingSecret). Ver values.example.yaml
+# y README.md para la guía de instalación en EKS.
+
+# -----------------------------------------------------------------------------
+# Imagen: registry/repositorio/tag comunes. El repositorio por servicio se deriva
+# como "<repositoryPrefix>/<nombre-servicio>" salvo override por servicio.
+# En AWS suele ser ECR: registry "<account>.dkr.ecr.<region>.amazonaws.com".
+# -----------------------------------------------------------------------------
+image:
+  registry: ""                 # p. ej. 123456789012.dkr.ecr.us-east-1.amazonaws.com
+  repositoryPrefix: antubank   # imagen final: <registry>/antubank/<servicio>:<tag>
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []           # p. ej. [{ name: ecr-credentials }] si el registry es privado
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Réplicas por defecto (override por servicio con services.<svc>.replicaCount).
+replicaCount: 1
+
+# Recursos por defecto (override por servicio con services.<svc>.resources).
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Contexto de seguridad (no-root, coherente con los Dockerfile que usan el usuario "spring").
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+# -----------------------------------------------------------------------------
+# Probes: liveness/readiness/startup contra Spring Boot Actuator (/actuator/health).
+# -----------------------------------------------------------------------------
+probes:
+  path: /actuator/health
+  startup:
+    failureThreshold: 30
+    periodSeconds: 10
+  liveness:
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# -----------------------------------------------------------------------------
+# Métricas (Requisito 11). Dos vías (elegir según tu clúster):
+#   - podAnnotations: anotaciones prometheus.io/scrape en los pods (Prometheus "vanilla").
+#   - serviceMonitor: recurso ServiceMonitor del Prometheus Operator (kube-prometheus-stack).
+# -----------------------------------------------------------------------------
+metrics:
+  path: /actuator/prometheus
+  podAnnotations:
+    enabled: true
+  serviceMonitor:
+    enabled: false             # activar si hay Prometheus Operator (CRD monitoring.coreos.com)
+    interval: 15s
+    labels: {}                 # etiquetas para que el Operator lo seleccione (p. ej. release: kube-prometheus-stack)
+
+# -----------------------------------------------------------------------------
+# Configuración GLOBAL (no sensible) inyectada a TODOS los microservicios vía ConfigMap.
+# Mapea a variables de entorno que Spring Boot resuelve por relaxed binding.
+# -----------------------------------------------------------------------------
+# Perfil Spring activo. Vacío/"default" => stack completo y fiel (NO el perfil demo reducido).
+springProfilesActive: "default"
+
+global:
+  # SPRING_PROFILES_ACTIVE se toma de .Values.springProfilesActive (arriba).
+  env:
+    # Keycloak: issuer del realm antu-bank (OIDC). Ajustar al hostname público de Keycloak en EKS.
+    KEYCLOAK_ISSUER_URI: "http://antu-bank-keycloak:8080/realms/antu-bank"
+    # Kafka/MSK: bootstrap servers (SASL). El endpoint real de MSK se pasa por values.
+    KAFKA_BOOTSTRAP_SERVERS: "b-1.msk.antubank.amazonaws.com:9096"
+    # SASL de MSK vía relaxed binding a spring.kafka.* (el JAAS config, sensible, va en el Secret).
+    SPRING_KAFKA_SECURITY_PROTOCOL: "SASL_SSL"
+    SPRING_KAFKA_PROPERTIES_SASL_MECHANISM: "SCRAM-SHA-512"
+    # Trazas / OTLP (observabilidad, Requisito 11). Ajustar al collector del clúster.
+    TRACING_SAMPLING_PROBABILITY: "0.1"
+    OTLP_TRACING_ENDPOINT: "http://jaeger-collector:4318/v1/traces"
+
+# -----------------------------------------------------------------------------
+# Microservicios. Cada entrada genera Deployment + Service (+ ConfigMap/Secret/ServiceMonitor).
+#   env:        variables NO sensibles (ConfigMap).
+#   secretEnv:  variables SENSIBLES (Secret generado). SOLO placeholders aquí; en producción
+#               preferir existingSecret. Ver values.example.yaml.
+#   existingSecret: nombre de un Secret preexistente con las variables sensibles (recomendado).
+#
+# Database-per-service ESTRICTO: cada servicio con persistencia apunta a SU PROPIA RDS
+# (host/base distintos). fraud/notification son stateless (sin datasource).
+# -----------------------------------------------------------------------------
+services:
+  api-gateway:
+    enabled: true
+    port: 8080
+    # URIs internas de los servicios downstream (DNS del clúster: <release>-<svc>).
+    # NOTA: si tu release NO se llama "antu-bank", ajusta el prefijo o usa fullnameOverride.
+    env:
+      GATEWAY_PORT: "8080"
+      ACCOUNT_SERVICE_URI: "http://antu-bank-account-service:8082"
+      LEDGER_SERVICE_URI: "http://antu-bank-ledger-service:8083"
+      TRANSFER_SERVICE_URI: "http://antu-bank-transfer-service:8084"
+    existingSecret: ""
+    secretEnv: {}
+
+  account-service:
+    enabled: true
+    port: 8082
+    env:
+      ACCOUNT_SERVICE_PORT: "8082"
+      # RDS propia de account (database-per-service). Solo host/URL/usuario aquí; password en Secret.
+      ACCOUNT_DB_URL: "jdbc:postgresql://antu-account.rds.amazonaws.com:5432/account"
+      ACCOUNT_DB_USER: "account"
+    existingSecret: ""         # p. ej. "account-service-secrets" (contiene ACCOUNT_DB_PASSWORD, SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG)
+    secretEnv: {}
+
+  ledger-service:
+    enabled: true
+    port: 8083
+    env:
+      LEDGER_SERVICE_PORT: "8083"
+      LEDGER_DB_URL: "jdbc:postgresql://antu-ledger.rds.amazonaws.com:5432/ledger"
+      LEDGER_DB_USER: "ledger"
+    existingSecret: ""
+    secretEnv: {}
+
+  transfer-service:
+    enabled: true
+    port: 8084
+    env:
+      TRANSFER_SERVICE_PORT: "8084"
+      TRANSFER_DB_URL: "jdbc:postgresql://antu-transfer.rds.amazonaws.com:5432/transfer"
+      TRANSFER_DB_USER: "transfer"
+      # Invocación directa (síncrona) al ledger por DNS del clúster.
+      LEDGER_BASE_URL: "http://antu-bank-ledger-service:8083"
+    existingSecret: ""
+    secretEnv: {}
+
+  fraud-service:
+    enabled: true
+    port: 8085
+    # Stateless: sin datasource. Solo Kafka (config global) + puerto.
+    env:
+      FRAUD_SERVICE_PORT: "8085"
+    existingSecret: ""
+    secretEnv: {}
+
+  notification-service:
+    enabled: true
+    port: 8086
+    # Stateless: sin datasource. Solo Kafka (config global) + puerto.
+    env:
+      NOTIFICATION_SERVICE_PORT: "8086"
+    existingSecret: ""
+    secretEnv: {}
+
+# -----------------------------------------------------------------------------
+# Ingress del api-gateway (única entrada pública). En EKS: AWS Load Balancer
+# Controller (className "alb") o ingress-nginx. Ajustar host y anotaciones.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  service: api-gateway
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+  hosts:
+    - host: api.antubank.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - hosts: ["api.antubank.example.com"]
+    #   secretName: antubank-tls
+
+# -----------------------------------------------------------------------------
+# Keycloak (IdP OIDC). Contenedor oficial; importa el realm desde un ConfigMap externo.
+# Secretos (admin + DB de Keycloak) desde un Secret EXISTENTE (nunca hardcodeados).
+# -----------------------------------------------------------------------------
+keycloak:
+  enabled: true
+  replicaCount: 1
+  port: 8080
+  managementPort: 9000         # Keycloak 26 sirve /health/* en el puerto de management (9000)
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.0"
+    pullPolicy: IfNotPresent
+  # Modo producción de Keycloak; en EKS detrás del ALB conviene proxy headers y no strict hostname.
+  args:
+    - start
+    - --import-realm
+    - --hostname-strict=false
+    - --http-enabled=true
+    - --proxy-headers=xforwarded
+  # Variables NO sensibles de Keycloak (DB, hostname). Password/credenciales van en el Secret.
+  env:
+    KC_DB: postgres
+    KC_DB_URL: "jdbc:postgresql://antu-keycloak.rds.amazonaws.com:5432/keycloak"
+    KC_DB_USERNAME: keycloak
+  # Secret EXISTENTE con: KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD, KC_DB_PASSWORD.
+  existingSecret: ""
+  # Alternativa de pruebas (placeholders; nunca credenciales reales).
+  adminSecretEnv: {}
+  # ConfigMap con el realm-export.json (infra/keycloak/realm-export.json), montado en /import.
+  realmConfigMap: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi

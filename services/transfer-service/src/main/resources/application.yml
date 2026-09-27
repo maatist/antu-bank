@@ -1,0 +1,118 @@
+spring:
+  application:
+    name: transfer-service
+
+  datasource:
+    url: ${TRANSFER_DB_URL:jdbc:postgresql://localhost:5435/transfer}
+    username: ${TRANSFER_DB_USER:transfer}
+    password: ${TRANSFER_DB_PASSWORD:transfer}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  # Seguridad: resource server OAuth2/OIDC (tarea 8.2, Requisito 8, criterio 4).
+  # El servicio valida el JWT emitido por Keycloak contra el JWKS del realm antu-bank.
+  # issuer-uri apunta al realm; Spring descubre el jwk-set-uri por OIDC discovery y cachea las
+  # claves para validar la firma localmente (sin llamar a Keycloak por request). Configurable
+  # por entorno (KEYCLOAK_ISSUER_URI) para demo/prod; por defecto el Keycloak local (puerto 8081).
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8081/realms/antu-bank}
+
+  # Kafka: producer del relay de la outbox (tarea 5.2, Requisito 5, criterios 2 y 4).
+  # Por defecto apunta al broker local de infra/docker-compose.yml (localhost:9092),
+  # con override por entorno para despliegues.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Publicación confiable: esperar confirmación de todas las réplicas y reintentar
+      # (idempotencia del producer para no duplicar por reintentos de red).
+      acks: all
+      properties:
+        enable.idempotence: true
+
+  # Internacionalización: mensajes en español (por defecto) e inglés.
+  messages:
+    basename: messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+  web:
+    locale: es
+    locale-resolver: accept-header
+
+server:
+  port: ${TRANSFER_SERVICE_PORT:8084}
+
+# Invocacion directa (sincrona) al ledger-service para el flujo end-to-end temprano
+# (tarea 4.3, previo a la integracion con Kafka de la tarea 5). Configurable por entorno.
+ledger:
+  base-url: ${LEDGER_BASE_URL:http://localhost:8083}
+
+# Relay de la outbox (tarea 5.2): publica a Kafka los eventos pendientes (published = false),
+# usando el aggregateId como clave de mensaje para preservar el orden por partición, y marca
+# la fila como publicada tras confirmar la publicación (Requisito 5, criterios 2 y 4).
+outbox:
+  relay:
+    # Topic destino de los eventos de transferencia.
+    topic: ${OUTBOX_TOPIC:transfer.events}
+    # Cadencia del poller (ms) que drena los eventos pendientes.
+    poll-interval-ms: ${OUTBOX_RELAY_POLL_INTERVAL_MS:1000}
+    # Máximo de eventos a publicar por ciclo (acota el tamaño de cada lote).
+    batch-size: ${OUTBOX_RELAY_BATCH_SIZE:100}
+
+# Documentación OpenAPI / Swagger UI
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Observabilidad (tarea 11.1, Requisito 11, criterio 1): se expone el endpoint
+        # /actuator/prometheus para que Prometheus scrapee las métricas de Micrometer.
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      # Etiqueta común aplicada a todas las métricas: permite filtrar/agrupar por servicio en los
+      # dashboards de Grafana (latencia, errores, throughput) — Requisito 11, criterio 2.
+      application: ${spring.application.name}
+    distribution:
+      # Habilita histogramas nativos de percentiles para la latencia de las peticiones HTTP server,
+      # de modo que Grafana pueda calcular p95/p99 con histogram_quantile sobre http_server_requests.
+      percentiles-histogram:
+        http.server.requests: true
+  # Observabilidad — trazas distribuidas OpenTelemetry → Jaeger (tarea 11.2, Requisito 11, criterio 3).
+  # Micrometer Tracing (puente OTel) crea spans en cada borde HTTP (llamado síncrono al ledger) y en el
+  # producer Kafka del relay de la outbox, propagando el contexto de traza (traceparent W3C en HTTP;
+  # headers en Kafka) para que la traza cruce gateway → transfer → ledger.
+  tracing:
+    sampling:
+      # Probabilidad de muestreo: 1.0 (100%) para la demo, así toda transferencia deja traza completa.
+      # En producción se bajaría (p. ej. 0.1) para acotar volumen. Configurable por entorno.
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Exporter OTLP/HTTP hacia el receiver OTLP de Jaeger all-in-one (puerto 4318, path /v1/traces).
+      # En el perfil local los servicios corren en el host, por lo que apuntan a localhost:4318;
+      # configurable por entorno (OTLP_TRACING_ENDPOINT) para demo/prod.
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}

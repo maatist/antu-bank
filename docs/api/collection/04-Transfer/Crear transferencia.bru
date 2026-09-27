@@ -1,0 +1,52 @@
+meta {
+  name: Crear transferencia
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{transferUrl}}/transfers
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept-Language: es
+  Idempotency-Key: {{idempotencyKey}}
+}
+
+body:json {
+  {
+    "sourceAccountId": "{{accountId}}",
+    "destinationAccountId": "{{destinationAccountId}}",
+    "amountMinor": 50000
+  }
+}
+
+script:pre-request {
+  // Genera una Idempotency-Key nueva y la guarda para reutilizarla en "Repetir transferencia".
+  // Así la petición repetida usa exactamente la misma clave y demuestra la idempotencia.
+  var key = "demo-" + (crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now());
+  bru.setEnvVar("idempotencyKey", key);
+}
+
+tests {
+  test("responde 201 (transferencia nueva)", function () {
+    expect(res.getStatus()).to.equal(201);
+    expect(res.getBody()).to.have.property("id");
+  });
+}
+
+docs {
+  Inicia una transferencia idempotente en CLP desde {{accountId}} hacia {{destinationAccountId}}
+  por $50.000 (50000 minor units). El header `Idempotency-Key` es obligatorio; su ausencia
+  produce 400. `POST /transfers` exige el rol CUSTOMER, por eso usa {{token}}.
+
+  La primera llamada con una clave nueva responde 201 Created. Ejecuta luego "Repetir
+  transferencia (misma Idempotency-Key)" para ver la respuesta idempotente (200, sin duplicar).
+}

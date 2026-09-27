@@ -1,0 +1,39 @@
+# =============================================================================
+# Perfil "demo" — transfer-service (tarea 12a.2, Requisito 12, criterios 2 y 7).
+# =============================================================================
+# Se activa SOLO en el despliegue público reducido (SPRING_PROFILES_ACTIVE=demo). NO altera el
+# perfil por defecto (local), que conserva database-per-service estricto (Requisito 12, criterio 7).
+#
+# Configuración reducida (Requisito 12, criterio 2):
+#   - Un ÚNICO PostgreSQL compartido, aislado por SCHEMA. transfer-service usa el schema "transfer".
+#   - Kafka gestionado gratuito (Upstash/Redpanda) vía SASL_SSL para publicar la outbox.
+#   - En el stack reducido el ledger-service se alcanza por su nombre de contenedor.
+#
+# Todos los secretos se parametrizan por variables de entorno (sin credenciales hardcodeadas).
+spring:
+  datasource:
+    url: ${TRANSFER_DB_URL:${DEMO_DB_URL:jdbc:postgresql://postgres:5432/neobank}?currentSchema=transfer}
+    username: ${DEMO_DB_USER:neobank}
+    password: ${DEMO_DB_PASSWORD:neobank}
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    # Migraciones confinadas al schema "transfer" (incluye su propio flyway_schema_history).
+    schemas: transfer
+    default-schema: transfer
+    create-schemas: true
+
+  # Kafka gestionado gratuito (Upstash/Redpanda) para el relay de la outbox (producer).
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:SASL_SSL}
+    properties:
+      sasl.mechanism: ${KAFKA_SASL_MECHANISM:SCRAM-SHA-256}
+      sasl.jaas.config: ${KAFKA_SASL_JAAS_CONFIG}
+
+# En el stack reducido, transfer-service invoca al ledger-service por el nombre de servicio del
+# compose (red interna). Configurable por entorno para el PaaS.
+ledger:
+  base-url: ${LEDGER_BASE_URL:http://ledger-service:8083}

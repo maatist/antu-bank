@@ -1,0 +1,102 @@
+# =============================================================================
+# ci.yml — Integración Continua (build + tests) de Antu Bank / NeoBank
+# =============================================================================
+# Cubre la tarea 12b.3 (parte de CI) y el Requisito 12.
+#
+# Se ejecuta en cada push y pull request. Dos jobs independientes:
+#   - backend:  compila y testea el monorepo Gradle (Java 21, Testcontainers).
+#   - frontend: instala, lintea, compila y testea la app Next.js.
+#
+# Testcontainers funciona en `ubuntu-latest` porque el runner de GitHub trae
+# Docker Engine preinstalado, por lo que `./gradlew build` (que ejecuta los
+# tests de integración con PostgreSQL/Kafka reales) corre sin pasos extra.
+#
+# Este workflow NO despliega nada ni toca AWS: solo verifica que el código
+# compila y que los tests pasan. El despliegue on-demand vive en cd.yml.
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+# Cancela ejecuciones antiguas del mismo ref para ahorrar minutos de runner.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Permisos mínimos: solo lectura del repositorio.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend — monorepo Gradle (todos los microservicios + common-domain).
+  # ---------------------------------------------------------------------------
+  backend:
+    name: Backend (Gradle · Java 21 · Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Cache del wrapper y de dependencias de Gradle (acelera builds sucesivos).
+      - name: Configurar Gradle (con cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      # `build` = assemble + check (compila y ejecuta unit + integration tests).
+      # Los tests de integración usan Testcontainers contra Docker del runner.
+      - name: Build y tests
+        run: ./gradlew build --no-daemon --stacktrace
+
+      # Publica los reportes de test aunque el build falle, para diagnóstico.
+      - name: Subir reportes de test
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-tests-backend
+          path: "**/build/reports/tests/**"
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Next.js (npm).
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend (Next.js · Node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js (con cache de npm)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests (Vitest)
+        run: npm test
+
+      - name: Build de producción
+        run: npm run build

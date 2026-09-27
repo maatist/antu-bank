@@ -1,0 +1,52 @@
+# =============================================================================
+# Fly.io — api-gateway (tarea 12a.3, Requisito 12, criterio 1).
+# =============================================================================
+# ÚNICA app PÚBLICA del backend: Fly termina TLS/HTTPS en el borde (force_https).
+# Enruta a los servicios internos por su hostname .internal de la red privada (6PN)
+# y agrega el BFF GraphQL. Perfil demo activo (SPRING_PROFILES_ACTIVE=demo).
+#
+# Despliegue (contexto de build = raíz del monorepo; ver infra/README-deploy.md):
+#   fly deploy -c infra/fly/gateway.fly.toml --dockerfile services/api-gateway/Dockerfile
+#
+# Los secretos (KEYCLOAK_ISSUER_URI si se maneja como secreto) se cargan con `fly secrets set`.
+
+app = "antu-bank-gateway"
+primary_region = "scl"   # Santiago; ajustar a la región deseada.
+
+[build]
+  dockerfile = "../../services/api-gateway/Dockerfile"
+
+[env]
+  SPRING_PROFILES_ACTIVE = "demo"
+  SERVER_PORT = "8080"
+  # Servicios internos por la red privada de Fly (.internal). NO son públicos.
+  ACCOUNT_SERVICE_URI = "http://antu-bank-account.internal:8082"
+  LEDGER_SERVICE_URI = "http://antu-bank-ledger.internal:8083"
+  TRANSFER_SERVICE_URI = "http://antu-bank-transfer.internal:8084"
+  # KEYCLOAK_ISSUER_URI se inyecta como secreto/env: URL HTTPS pública del realm, p. ej.
+  #   https://antu-bank-keycloak.fly.dev/realms/antu-bank
+
+# Servicio HTTP público: HTTPS forzado, el borde de Fly termina TLS.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1   # always-on 24/7 (Requisito 12, criterio 1).
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  # Health check HTTP contra el actuator del gateway.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/actuator/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

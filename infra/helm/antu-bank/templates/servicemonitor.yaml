@@ -1,0 +1,36 @@
+{{/*
+=============================================================================
+ServiceMonitor por microservicio (Prometheus Operator) — Requisito 11, criterio 1.
+Instruye a Prometheus (vía Prometheus Operator / kube-prometheus-stack) a scrapear
+el endpoint /actuator/prometheus de cada servicio.
+
+Se genera SOLO si metrics.serviceMonitor.enabled = true (requiere el CRD
+monitoring.coreos.com/v1 instalado en el clúster). Como alternativa sin Operator,
+el Deployment ya lleva anotaciones prometheus.io/scrape (ver metrics.podAnnotations).
+=============================================================================
+*/}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- $root := . -}}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "antu-bank.service.fullname" (dict "root" $root "name" $name) }}
+  labels:
+    {{- include "antu-bank.service.labels" (dict "root" $root "name" $name) | nindent 4 }}
+    {{- with $root.Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "antu-bank.service.selectorLabels" (dict "root" $root "name" $name) | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ $root.Values.metrics.path | quote }}
+      interval: {{ $root.Values.metrics.serviceMonitor.interval }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,42 @@
+meta {
+  name: Token ADMIN (admin.demo)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{keycloakUrl}}/realms/{{realm}}/protocol/openid-connect/token
+  body: formUrlEncoded
+  auth: none
+}
+
+headers {
+  Content-Type: application/x-www-form-urlencoded
+}
+
+body:form-urlencoded {
+  grant_type: password
+  client_id: {{authClientId}}
+  username: {{adminUser}}
+  password: {{adminPass}}
+}
+
+script:post-response {
+  // Guarda el access_token del usuario ADMIN en la variable de entorno {{adminToken}}.
+  // Solo se necesita para registrar asientos en el ledger (POST /transactions exige ADMIN).
+  if (res.getStatus() === 200 && res.getBody() && res.getBody().access_token) {
+    bru.setEnvVar("adminToken", res.getBody().access_token);
+  }
+}
+
+tests {
+  test("responde 200 con access_token", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody()).to.have.property("access_token");
+  });
+}
+
+docs {
+  Obtiene un token de USUARIO ADMIN (roles ADMIN + CUSTOMER). Necesario para el
+  ledger-service: `POST /transactions` exige el rol ADMIN. Guarda el token en {{adminToken}}.
+}
